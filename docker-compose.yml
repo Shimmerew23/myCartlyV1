@@ -1,0 +1,117 @@
+version: '3.9'
+
+services:
+  # ─────────────────────────────────────────
+  # MongoDB
+  # ─────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: CartLy_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: CartLypass
+      MONGO_INITDB_DATABASE: CartLy_ecommerce
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - CartLy_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Redis
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: CartLy_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass CartLyredis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - CartLy_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Backend (Node.js / Express)
+  # ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: CartLy_backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://admin:CartLypass@mongo:27017/CartLy_ecommerce?authSource=admin
+      REDIS_URL: redis://:CartLyredis@redis:6379
+      PORT: 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/logs:/app/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - CartLy_net
+
+  # ─────────────────────────────────────────
+  # Frontend (React / Vite)
+  # ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: CartLy_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - CartLy_net
+
+  # ─────────────────────────────────────────
+  # Nginx Reverse Proxy
+  # ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: CartLy_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./backend/uploads:/var/www/uploads:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - CartLy_net
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  CartLy_net:
+    driver: bridge
