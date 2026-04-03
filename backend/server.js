@@ -71,8 +71,9 @@ app.use(
     origin: (origin, callback) => {
       // List of explicitly allowed origins
       const allowedOrigins = [
-        process.env.FRONTEND_URL
-      ];
+        'https://mcartly.vercel.app',
+        process.env.FRONTEND_URL,
+      ].filter(Boolean);
 
       // Allow LAN IPs for development (192.168.x.x)
       if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://192.168.')) {
@@ -210,6 +211,19 @@ const startServer = async () => {
       logger.info(`📦 MongoDB: Connected`);
       logger.info(`🌐 API: http://<Domain>:${PORT}/api`);
     });
+
+    // Keep-alive ping — prevent Render free tier from sleeping (every 12 min)
+    if (process.env.NODE_ENV === 'production') {
+      const https = require('https');
+      const PING_URL = `https://mcartly.onrender.com/health`;
+      setInterval(() => {
+        https.get(PING_URL, (res) => {
+          logger.info(`Keep-alive ping: ${res.statusCode}`);
+        }).on('error', (err) => {
+          logger.warn(`Keep-alive ping failed: ${err.message}`);
+        });
+      }, 12 * 60 * 1000); // 12 minutes
+    }
 
     // Graceful shutdown
     const gracefulShutdown = (signal) => {
