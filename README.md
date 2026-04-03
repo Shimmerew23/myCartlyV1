@@ -35,7 +35,7 @@ A production-grade, enterprise-level eCommerce platform built with the MERN stac
 | Forms | React Hook Form + Zod |
 | Animation | Framer Motion |
 | Charts | Recharts |
-| HTTP | Axios (with interceptors + token refresh) |
+| HTTP | Axios (with interceptors, token refresh, and per-route 401 handling) |
 | File Uploads | React Dropzone |
 | Payments | Stripe.js + @stripe/react-stripe-js |
 | Icons | Lucide React |
@@ -69,7 +69,7 @@ A production-grade, enterprise-level eCommerce platform built with the MERN stac
 ### Security Middleware
 - **Helmet** — 15 secure HTTP headers
 - **CORS** — whitelist-based origin control
-- **Rate Limiting** — global (100/15min), auth (10/15min), uploads (30/hr) — backed by Redis
+- **Rate Limiting** — global (100/15min), auth (10/5min with auto-reset on successful login), uploads (30/hr) — backed by Redis
 - **MongoDB Sanitization** — prevents NoSQL injection (`express-mongo-sanitize`)
 - **XSS Clean** — strips malicious HTML/JS from inputs
 - **HPP** — HTTP Parameter Pollution prevention
@@ -541,6 +541,16 @@ The UI follows an **editorial/luxury** aesthetic inspired by high-end fashion an
 6. Configure Stripe webhooks pointing to `/api/orders/webhook`
 7. Set up Cloudinary for cloud image storage (replace local Multer)
 8. Configure a production SMTP service (SendGrid, Resend, Postmark, etc.)
+
+---
+
+## Changelog
+
+### Fixes & Improvements
+
+- **Auth error messages** — Login failures (wrong email/password) now correctly surface the API message (`"Invalid email or password"`) instead of the generic Axios `"Request failed with status code 401"`. Root cause: the response interceptor was attempting a token refresh on every 401, including intentional login failures. Auth endpoints (`/auth/login`, `/auth/register`) are now excluded from the refresh retry logic.
+- **Auth rate limiter window** — Reduced from 15 minutes to 5 minutes per window.
+- **Auth rate limiter reset** — The `authLimiter` IP counter is now cleared automatically after a successful login, so a legitimate user who previously failed attempts is not penalized for the rest of the window.
 
 ---
 
