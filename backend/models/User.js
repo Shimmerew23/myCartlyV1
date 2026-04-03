@@ -147,11 +147,9 @@ const userSchema = new mongoose.Schema(
 );
 
 // Indexes for performance
-userSchema.index({ email: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ 'oauth.googleId': 1 }, { sparse: true });
 userSchema.index({ 'oauth.facebookId': 1 }, { sparse: true });
-userSchema.index({ 'sellerProfile.storeSlug': 1 }, { sparse: true });
 userSchema.index({ createdAt: -1 });
 
 // Virtual: isLocked

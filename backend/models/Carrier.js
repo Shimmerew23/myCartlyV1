@@ -17,7 +17,6 @@ const carrierSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-carrierSchema.index({ code: 1 });
 carrierSchema.index({ isActive: 1, sortOrder: 1 });
 
 const Carrier = mongoose.model('Carrier', carrierSchema);

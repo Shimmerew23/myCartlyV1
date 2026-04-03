@@ -207,7 +207,7 @@ const startServer = async () => {
 
     const PORT = parseInt(process.env.PORT);
     const server = app.listen(PORT, () => {
-      logger.info(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+      logger.info(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
       logger.info(`📦 MongoDB: Connected`);
       logger.info(`🌐 API: http://<Domain>:${PORT}/api`);
     });
@@ -218,7 +218,11 @@ const startServer = async () => {
       const PING_URL = `https://mcartly.onrender.com/health`;
       setInterval(() => {
         https.get(PING_URL, (res) => {
-          logger.info(`Keep-alive ping: ${res.statusCode}`);
+          if (res.statusCode !== 200) {
+            logger.warn(`Keep-alive ping returned status: ${res.statusCode}`);
+          } else {
+            logger.info(`Keep-alive ping success: ${res.statusCode}`);
+          }
         }).on('error', (err) => {
           logger.warn(`Keep-alive ping failed: ${err.message}`);
         });

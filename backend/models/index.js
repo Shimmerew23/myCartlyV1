@@ -34,7 +34,6 @@ cartSchema.virtual('itemCount').get(function () {
   return this.items.reduce((sum, item) => sum + item.quantity, 0);
 });
 
-cartSchema.index({ user: 1 });
 
 // ========================
 // REVIEW MODEL
@@ -128,7 +127,6 @@ const categorySchema = new mongoose.Schema(
   { timestamps: true, toJSON: { virtuals: true } }
 );
 
-categorySchema.index({ slug: 1 });
 categorySchema.index({ parent: 1 });
 
 // ========================
@@ -182,7 +180,6 @@ const couponSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-couponSchema.index({ code: 1 });
 couponSchema.index({ validFrom: 1, validUntil: 1 });
 
 // ========================

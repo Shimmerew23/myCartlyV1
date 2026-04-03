@@ -150,7 +150,6 @@ const productSchema = new mongoose.Schema(
 
 // Indexes
 productSchema.index({ name: 'text', description: 'text', tags: 'text', brand: 'text' });
-productSchema.index({ slug: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ seller: 1 });
 productSchema.index({ status: 1 });
