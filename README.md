@@ -80,7 +80,8 @@ A production-grade, enterprise-level eCommerce platform built with the MERN stac
 - Compression — gzip responses (threshold: 1KB)
 - ETag — conditional requests for client-side caching
 - Image optimization — Sharp resizes & converts to WebP before upload
-- Cloud image storage — Cloudinary (persistent across deploys, CDN-served)
+- Cloud image storage — Cloudinary (persistent across deploys, CDN-served, UUID-namespaced public IDs prevent cross-user collisions)
+- Old image cleanup — previous avatar/logo/banner/product images are deleted from Cloudinary when replaced
 - Full-text search — MongoDB text indexes
 - Audit Logs — every admin action tracked in DB (90-day TTL)
 - Performance timing — slow request detection (>1000ms)
@@ -142,7 +143,7 @@ A production-grade, enterprise-level eCommerce platform built with the MERN stac
 theCartLy/
 ├── backend/
 │   ├── config/
-│   │   ├── cloudinary.js       # Cloudinary client + uploadBuffer helper
+│   │   ├── cloudinary.js       # Cloudinary client, uploadBuffer (UUID public_id), deleteImage helpers
 │   │   ├── db.js               # MongoDB connection
 │   │   ├── passport.js         # Passport strategies (local, Google, Facebook, JWT)
 │   │   └── redis.js            # Redis client setup
@@ -551,6 +552,8 @@ The UI follows an **editorial/luxury** aesthetic inspired by high-end fashion an
 ### Fixes & Improvements
 
 - **Cloudinary image storage** — Images (product photos, avatars, store logos/banners) are now uploaded directly to Cloudinary and served via CDN instead of being saved to the local server filesystem. This fixes image persistence on ephemeral platforms like Render's free tier. Sharp still handles resizing and WebP conversion before the upload. Supports both `CLOUDINARY_URL` and individual credential vars.
+- **Unique Cloudinary public IDs** — Every upload is assigned a UUID-based `public_id` (e.g. `cartly/avatars/3f2a1b4c-...`) so no two users can ever overwrite each other's files, even if they upload images with the same filename.
+- **Automatic old image cleanup** — When a user replaces their avatar, store logo, store banner, or product images, the previous Cloudinary asset is deleted automatically using the stored `public_id`. The `public_id` is persisted in MongoDB alongside the image URL.
 - **Auth error messages** — Login failures (wrong email/password) now correctly surface the API message (`"Invalid email or password"`) instead of the generic Axios `"Request failed with status code 401"`. Root cause: the response interceptor was attempting a token refresh on every 401, including intentional login failures. Auth endpoints (`/auth/login`, `/auth/register`) are now excluded from the refresh retry logic.
 - **Auth rate limiter window** — Reduced from 15 minutes to 5 minutes per window.
 - **Auth rate limiter reset** — The `authLimiter` IP counter is now cleared automatically after a successful login, so a legitimate user who previously failed attempts is not penalized for the rest of the window.

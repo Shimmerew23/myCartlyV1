@@ -9,7 +9,7 @@ const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
 const slugify = require('slugify');
 const sharp = require('sharp');
-const { uploadBuffer } = require('../config/cloudinary');
+const { uploadBuffer, deleteImage } = require('../config/cloudinary');
 
 // ============================================================
 // USER CONTROLLER
@@ -22,7 +22,10 @@ const updateProfile = async (req, res, next) => {
     allowedFields.forEach((f) => { if (req.body[f] !== undefined) updateData[f] = req.body[f]; });
 
     if (req.processedImage) {
+      const existing = await User.findById(req.user._id).select('avatarPublicId');
+      await deleteImage(existing?.avatarPublicId);
       updateData.avatar = req.processedImage.url;
+      updateData.avatarPublicId = req.processedImage.public_id;
     }
 
     const user = await User.findByIdAndUpdate(req.user._id, updateData, {
@@ -124,21 +127,28 @@ const updateSellerProfile = async (req, res, next) => {
     if (shippingPolicy !== undefined) update['sellerProfile.shippingPolicy'] = shippingPolicy;
     if (socialLinks) update['sellerProfile.socialLinks'] = socialLinks;
 
-    if (req.files?.storeLogo?.[0]) {
-      const buffer = await sharp(req.files.storeLogo[0].buffer)
-        .resize(400, 400, { fit: 'inside' })
-        .toFormat('webp', { quality: 85 })
-        .toBuffer();
-      const { url } = await uploadBuffer(buffer, { folder: 'cartly/avatars', format: 'webp' });
-      update['sellerProfile.storeLogo'] = url;
-    }
-    if (req.files?.storeBanner?.[0]) {
-      const buffer = await sharp(req.files.storeBanner[0].buffer)
-        .resize(1200, 400, { fit: 'inside' })
-        .toFormat('webp', { quality: 85 })
-        .toBuffer();
-      const { url } = await uploadBuffer(buffer, { folder: 'cartly/banners', format: 'webp' });
-      update['sellerProfile.storeBanner'] = url;
+    if (req.files?.storeLogo?.[0] || req.files?.storeBanner?.[0]) {
+      const existing = await User.findById(req.user._id).select('sellerProfile.storeLogoPublicId sellerProfile.storeBannerPublicId');
+      if (req.files?.storeLogo?.[0]) {
+        await deleteImage(existing?.sellerProfile?.storeLogoPublicId);
+        const buffer = await sharp(req.files.storeLogo[0].buffer)
+          .resize(400, 400, { fit: 'inside' })
+          .toFormat('webp', { quality: 85 })
+          .toBuffer();
+        const { url, public_id } = await uploadBuffer(buffer, { folder: 'cartly/avatars', format: 'webp' });
+        update['sellerProfile.storeLogo'] = url;
+        update['sellerProfile.storeLogoPublicId'] = public_id;
+      }
+      if (req.files?.storeBanner?.[0]) {
+        await deleteImage(existing?.sellerProfile?.storeBannerPublicId);
+        const buffer = await sharp(req.files.storeBanner[0].buffer)
+          .resize(1200, 400, { fit: 'inside' })
+          .toFormat('webp', { quality: 85 })
+          .toBuffer();
+        const { url, public_id } = await uploadBuffer(buffer, { folder: 'cartly/banners', format: 'webp' });
+        update['sellerProfile.storeBanner'] = url;
+        update['sellerProfile.storeBannerPublicId'] = public_id;
+      }
     }
 
     const updated = await User.findByIdAndUpdate(req.user._id, update, { new: true });

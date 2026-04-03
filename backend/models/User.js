@@ -16,7 +16,9 @@ const sellerProfileSchema = new mongoose.Schema({
   storeName: { type: String, trim: true },
   storeBio: { type: String, maxlength: 500 },
   storeLogo: String,
+  storeLogoPublicId: String,
   storeBanner: String,
+  storeBannerPublicId: String,
   storeSlug: { type: String, unique: true, sparse: true },
   bankAccount: {
     accountNumber: String, // encrypted
@@ -74,6 +76,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    avatarPublicId: String,
     phone: String,
     dateOfBirth: Date,
     gender: { type: String, enum: ['male', 'female', 'other', 'prefer-not-to-say'] },

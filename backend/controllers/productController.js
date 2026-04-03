@@ -4,6 +4,7 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
+const { deleteImage } = require('../config/cloudinary');
 
 // Helper: compute virtual fields lost when using .lean()
 const addProductVirtuals = (p) => {
@@ -188,6 +189,7 @@ const createProduct = async (req, res, next) => {
     if (req.processedImages?.length) {
       productData.images = req.processedImages.map((img, i) => ({
         url: img.url,
+        public_id: img.public_id,
         alt: req.body.name,
         isPrimary: i === 0,
       }));
@@ -231,11 +233,14 @@ const updateProduct = async (req, res, next) => {
     if (req.processedImages?.length) {
       const newImages = req.processedImages.map((img, i) => ({
         url: img.url,
+        public_id: img.public_id,
         alt: updateData.name || product.name,
         isPrimary: i === 0 && !product.images.length,
       }));
 
       if (updateData.replaceImages === 'true') {
+        // Delete replaced images from Cloudinary
+        await Promise.all(product.images.map((img) => deleteImage(img.public_id)));
         updateData.images = newImages;
       } else {
         updateData.images = [...product.images, ...newImages];
