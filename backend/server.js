@@ -72,6 +72,7 @@ app.use(
       // List of explicitly allowed origins
       const allowedOrigins = [
         process.env.FRONTEND_URL || 'http://localhost:5173',
+        'https://mcartly.vercel.app',
         'http://localhost:3000',
         'http://localhost:5000',
       ];
@@ -125,7 +126,8 @@ app.use(
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000, // 1 day
-      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+      // 'none' required for cross-domain (Vercel frontend + Render backend)
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     },
   })
 );
