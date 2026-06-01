@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 
 const connectDB = require('./config/db');
+const { connectPrisma } = require('./config/prisma');
 const { connectRedis } = require('./config/redis');
 const { connectCloudinary } = require('./config/cloudinary');
 const passport = require('./config/passport');
@@ -198,6 +199,9 @@ const startServer = async () => {
   try {
     // Connect to MongoDB
     await connectDB();
+
+    // Connect to PostgreSQL via Prisma (runs alongside Mongo during the migration)
+    await connectPrisma();
 
     // Connect to Redis (optional — fails gracefully)
     await connectRedis();
