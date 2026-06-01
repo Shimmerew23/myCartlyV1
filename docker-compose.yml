@@ -37,7 +37,9 @@ services:
       POSTGRES_PASSWORD: cartlypass
       POSTGRES_DB: cartly_ecommerce
     ports:
-      - "5432:5432"
+      # Host 5433 -> container 5432 to avoid clashing with a native Postgres on 5432.
+      # In-compose services still reach it at postgres:5432.
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
