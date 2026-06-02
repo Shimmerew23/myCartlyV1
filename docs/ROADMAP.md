@@ -30,14 +30,22 @@ stable feature set, and new features build on the production-ready foundation.
 
 ---
 
-## Phase 1 — Database re-platform 🟥 foundational
+## Phase 1 — Database re-platform 🟨 in progress
 
-**Status:** ⬜ Not started
+**Status:** 🟨 In progress (sub-plans 1A–1F)
 
 Swap the data layer from MongoDB/Mongoose to PostgreSQL/Prisma **with zero change
 to the API contract** — identical routes, `ApiResponse` envelope, and JSON shapes,
 so the frontend is untouched. Greenfield: clean schema design + rewritten seeder,
 no live-data ETL.
+
+### Sub-plan progress
+- [x] **1A — Foundation:** Postgres in compose (host 5433), Prisma schema (19 tables) + initial migration, `connectPrisma` wired into boot, Jest+Supertest harness.
+- [x] **1B — Auth & Users:** `authenticate`/`optionalAuth`, full `authController`, Passport (Google/JWT), and user profile/address/seller-profile endpoints on Prisma. `userService` replaces Mongoose User instance methods. 45 backend tests green; frozen envelope verified. *(Wishlist population & seller-store deferred to 1C; rate limiters skip under `NODE_ENV=test`.)*
+- [ ] **1C — Products & Categories + search** (restore wishlist population & seller-store; tsvector/pg_trgm)
+- [ ] **1D — Cart & Orders + coupons** (Prisma `$transaction` for order placement)
+- [ ] **1E — Reviews, carriers, warehouse, feedback, admin, audit** (complete Carrier/Warehouse models; audit cleanup job)
+- [ ] **1F — Seeder rewrite & Mongoose removal**
 
 ### Workstreams
 - [ ] Stand up Postgres (docker-compose service; remove `mongo`), `DATABASE_URL` env
