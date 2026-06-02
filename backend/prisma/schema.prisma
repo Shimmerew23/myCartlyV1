@@ -222,6 +222,7 @@ model Product {
   sales              Int           @default(0)
   revenue            Float         @default(0)
   wishlistCount      Int           @default(0)
+  searchVector       Unsupported("tsvector")?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
@@ -238,6 +239,7 @@ model Product {
   @@index([createdAt])
   @@index([sales])
   @@index([tags])
+  @@index([searchVector], type: Gin)
 }
 
 model ProductImage {
