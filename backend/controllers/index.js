@@ -10,6 +10,8 @@ const logger = require('../utils/logger');
 const slugify = require('slugify');
 const sharp = require('sharp');
 const { uploadBuffer, deleteImage } = require('../config/cloudinary');
+const { prisma } = require('../config/prisma');
+const userService = require('../services/userService');
 
 // ============================================================
 // USER CONTROLLER
@@ -20,94 +22,92 @@ const updateProfile = async (req, res, next) => {
     const allowedFields = ['name', 'phone', 'dateOfBirth', 'gender', 'preferences'];
     const updateData = {};
     allowedFields.forEach((f) => { if (req.body[f] !== undefined) updateData[f] = req.body[f]; });
+    if (updateData.dateOfBirth) updateData.dateOfBirth = new Date(updateData.dateOfBirth);
 
     if (req.processedImage) {
-      const existing = await User.findById(req.user._id).select('avatarPublicId');
+      const existing = await prisma.user.findUnique({ where: { id: req.user._id }, select: { avatarPublicId: true } });
       await deleteImage(existing?.avatarPublicId);
       updateData.avatar = req.processedImage.url;
       updateData.avatarPublicId = req.processedImage.public_id;
     }
 
-    const user = await User.findByIdAndUpdate(req.user._id, updateData, {
-      new: true,
-      runValidators: true,
+    const user = await prisma.user.update({
+      where: { id: req.user._id },
+      data: updateData,
+      include: { addresses: true, sellerProfile: true },
     });
 
-    return ApiResponse.success(res, user.toSafeObject(), 'Profile updated');
+    return ApiResponse.success(res, userService.toSafeObject(user), 'Profile updated');
   } catch (err) { next(err); }
 };
 
 const addAddress = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
     if (req.body.isDefault) {
-      user.addresses.forEach((addr) => { addr.isDefault = false; });
+      await prisma.address.updateMany({ where: { userId: req.user._id }, data: { isDefault: false } });
     }
-    user.addresses.push(req.body);
-    await user.save();
-    return ApiResponse.success(res, user.addresses, 'Address added');
+    await prisma.address.create({ data: { ...userService.pickAddressFields(req.body), userId: req.user._id } });
+    const addresses = await prisma.address.findMany({ where: { userId: req.user._id } });
+    return ApiResponse.success(res, addresses.map(userService.serializeAddress), 'Address added');
   } catch (err) { next(err); }
 };
 
 const updateAddress = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
-    const addr = user.addresses.id(req.params.addressId);
+    const addr = await prisma.address.findFirst({ where: { id: req.params.addressId, userId: req.user._id } });
     if (!addr) return next(ApiError.notFound('Address not found'));
+
     if (req.body.isDefault) {
-      user.addresses.forEach((a) => { a.isDefault = false; });
+      await prisma.address.updateMany({ where: { userId: req.user._id }, data: { isDefault: false } });
     }
-    Object.assign(addr, req.body);
-    await user.save();
-    return ApiResponse.success(res, user.addresses, 'Address updated');
+    await prisma.address.update({ where: { id: addr.id }, data: userService.pickAddressFields(req.body) });
+
+    const addresses = await prisma.address.findMany({ where: { userId: req.user._id } });
+    return ApiResponse.success(res, addresses.map(userService.serializeAddress), 'Address updated');
   } catch (err) { next(err); }
 };
 
 const deleteAddress = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
-    user.addresses = user.addresses.filter(
-      (a) => a._id.toString() !== req.params.addressId
-    );
-    await user.save();
-    return ApiResponse.success(res, user.addresses, 'Address deleted');
+    await prisma.address.deleteMany({ where: { id: req.params.addressId, userId: req.user._id } });
+    const addresses = await prisma.address.findMany({ where: { userId: req.user._id } });
+    return ApiResponse.success(res, addresses.map(userService.serializeAddress), 'Address deleted');
   } catch (err) { next(err); }
 };
 
 const upgradeToSeller = async (req, res, next) => {
   try {
     const { storeName, storeBio } = req.body;
-    const user = await User.findById(req.user._id);
+    const user = await prisma.user.findUnique({ where: { id: req.user._id } });
 
     if (user.role === 'seller') {
       return next(ApiError.conflict('Already a seller'));
     }
 
     const storeSlug = slugify(storeName, { lower: true, strict: true });
-    const slugExists = await User.findOne({ 'sellerProfile.storeSlug': storeSlug });
+    const slugExists = await prisma.sellerProfile.findUnique({ where: { storeSlug } });
     if (slugExists) return next(ApiError.conflict('Store name already taken'));
 
-    user.role = 'seller';
-    user.sellerProfile = {
-      storeName,
-      storeBio,
-      storeSlug,
-      isApproved: false, // Admin must approve
-    };
+    const profileData = { storeName, storeBio, storeSlug, isApproved: false };
+    if (req.processedImage) profileData.storeLogo = req.processedImage.url;
 
-    if (req.processedImage) {
-      user.sellerProfile.storeLogo = req.processedImage.url;
-    }
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        role: 'seller',
+        sellerProfile: { upsert: { create: profileData, update: profileData } },
+      },
+      include: { addresses: true, sellerProfile: true },
+    });
 
-    await user.save();
     logger.info(`User upgraded to seller: ${user.email}`);
-    return ApiResponse.success(res, user.toSafeObject(), 'Seller application submitted. Awaiting admin approval.');
+    return ApiResponse.success(res, userService.toSafeObject(updated), 'Seller application submitted. Awaiting admin approval.');
   } catch (err) { next(err); }
 };
 
 const updateSellerProfile = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
+    const user = await prisma.user.findUnique({ where: { id: req.user._id }, include: { sellerProfile: true } });
     if (!user || !['seller', 'admin', 'superadmin'].includes(user.role)) {
       return next(ApiError.forbidden('Seller account required'));
     }
@@ -115,44 +115,46 @@ const updateSellerProfile = async (req, res, next) => {
     const { storeName, storeBio, storeEmail, storePhone, returnPolicy, shippingPolicy } = req.body;
     let socialLinks;
     if (req.body.socialLinks) {
-      try { socialLinks = typeof req.body.socialLinks === 'string' ? JSON.parse(req.body.socialLinks) : req.body.socialLinks; } catch {}
+      try { socialLinks = typeof req.body.socialLinks === 'string' ? JSON.parse(req.body.socialLinks) : req.body.socialLinks; } catch { /* ignore */ }
     }
 
-    const update = {};
-    if (storeName !== undefined) update['sellerProfile.storeName'] = storeName;
-    if (storeBio !== undefined) update['sellerProfile.storeBio'] = storeBio;
-    if (storeEmail !== undefined) update['sellerProfile.storeEmail'] = storeEmail;
-    if (storePhone !== undefined) update['sellerProfile.storePhone'] = storePhone;
-    if (returnPolicy !== undefined) update['sellerProfile.returnPolicy'] = returnPolicy;
-    if (shippingPolicy !== undefined) update['sellerProfile.shippingPolicy'] = shippingPolicy;
-    if (socialLinks) update['sellerProfile.socialLinks'] = socialLinks;
+    const data = {};
+    if (storeName !== undefined) data.storeName = storeName;
+    if (storeBio !== undefined) data.storeBio = storeBio;
+    if (storeEmail !== undefined) data.storeEmail = storeEmail;
+    if (storePhone !== undefined) data.storePhone = storePhone;
+    if (returnPolicy !== undefined) data.returnPolicy = returnPolicy;
+    if (shippingPolicy !== undefined) data.shippingPolicy = shippingPolicy;
+    if (socialLinks) data.socialLinks = socialLinks;
 
-    if (req.files?.storeLogo?.[0] || req.files?.storeBanner?.[0]) {
-      const existing = await User.findById(req.user._id).select('sellerProfile.storeLogoPublicId sellerProfile.storeBannerPublicId');
-      if (req.files?.storeLogo?.[0]) {
-        await deleteImage(existing?.sellerProfile?.storeLogoPublicId);
-        const buffer = await sharp(req.files.storeLogo[0].buffer)
-          .resize(400, 400, { fit: 'inside' })
-          .toFormat('webp', { quality: 85 })
-          .toBuffer();
-        const { url, public_id } = await uploadBuffer(buffer, { folder: 'cartly/avatars', format: 'webp' });
-        update['sellerProfile.storeLogo'] = url;
-        update['sellerProfile.storeLogoPublicId'] = public_id;
-      }
-      if (req.files?.storeBanner?.[0]) {
-        await deleteImage(existing?.sellerProfile?.storeBannerPublicId);
-        const buffer = await sharp(req.files.storeBanner[0].buffer)
-          .resize(1200, 400, { fit: 'inside' })
-          .toFormat('webp', { quality: 85 })
-          .toBuffer();
-        const { url, public_id } = await uploadBuffer(buffer, { folder: 'cartly/banners', format: 'webp' });
-        update['sellerProfile.storeBanner'] = url;
-        update['sellerProfile.storeBannerPublicId'] = public_id;
-      }
+    if (req.files?.storeLogo?.[0]) {
+      await deleteImage(user.sellerProfile?.storeLogoPublicId);
+      const buffer = await sharp(req.files.storeLogo[0].buffer)
+        .resize(400, 400, { fit: 'inside' })
+        .toFormat('webp', { quality: 85 })
+        .toBuffer();
+      const { url, public_id } = await uploadBuffer(buffer, { folder: 'cartly/avatars', format: 'webp' });
+      data.storeLogo = url;
+      data.storeLogoPublicId = public_id;
+    }
+    if (req.files?.storeBanner?.[0]) {
+      await deleteImage(user.sellerProfile?.storeBannerPublicId);
+      const buffer = await sharp(req.files.storeBanner[0].buffer)
+        .resize(1200, 400, { fit: 'inside' })
+        .toFormat('webp', { quality: 85 })
+        .toBuffer();
+      const { url, public_id } = await uploadBuffer(buffer, { folder: 'cartly/banners', format: 'webp' });
+      data.storeBanner = url;
+      data.storeBannerPublicId = public_id;
     }
 
-    const updated = await User.findByIdAndUpdate(req.user._id, update, { new: true });
-    return ApiResponse.success(res, updated.toSafeObject(), 'Store profile updated');
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { sellerProfile: { upsert: { create: data, update: data } } },
+      include: { addresses: true, sellerProfile: true },
+    });
+
+    return ApiResponse.success(res, userService.toSafeObject(updated), 'Store profile updated');
   } catch (err) { next(err); }
 };
 
