@@ -58,3 +58,80 @@ describe('categories', () => {
     expect(inDb.isActive).toBe(false);
   });
 });
+
+describe('wishlist', () => {
+  afterEach(async () => {
+    await prisma.product.deleteMany({});
+    await prisma.category.deleteMany({});
+    await prisma.user.deleteMany({});
+  });
+
+  async function ctx() {
+    const user = await prisma.user.create({ data: { name: 'U', email: `u${Date.now()}${Math.random()}@t.com`, role: 'user' } });
+    const seller = await prisma.user.create({ data: { name: 'S', email: `s${Date.now()}${Math.random()}@t.com`, role: 'seller' } });
+    const cat = await prisma.category.create({ data: { name: 'C', slug: `c-${Date.now()}${Math.random()}` } });
+    const prod = await prisma.product.create({ data: { name: 'Wish', slug: `w-${Date.now()}${Math.random()}`, description: 'd', price: 9, status: 'active', categoryId: cat.id, sellerId: seller.id, images: { create: [{ url: 'u', isPrimary: true }] } } });
+    return { user, prod, token: generateTokenPair(user.id, 'user').accessToken };
+  }
+
+  it('toggles a product into and out of the wishlist', async () => {
+    const { user, prod, token } = await ctx();
+    const add = await request(app).post(`/api/products/${prod.id}/wishlist`).set('Authorization', `Bearer ${token}`);
+    expect(add.status).toBe(200);
+    expect(add.body.data.wishlisted).toBe(true);
+    let inDb = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(inDb.wishlist).toContain(prod.id);
+
+    const remove = await request(app).post(`/api/products/${prod.id}/wishlist`).set('Authorization', `Bearer ${token}`);
+    expect(remove.body.data.wishlisted).toBe(false);
+    inDb = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(inDb.wishlist).not.toContain(prod.id);
+  });
+
+  it('GET /api/users/wishlist returns populated product summaries', async () => {
+    const { user, prod, token } = await ctx();
+    await prisma.user.update({ where: { id: user.id }, data: { wishlist: [prod.id] } });
+    const res = await request(app).get('/api/users/wishlist').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0]).toMatchObject({ _id: prod.id, name: 'Wish' });
+  });
+
+  it('GET /api/auth/me returns wishlist populated with product summaries', async () => {
+    const { user, prod, token } = await ctx();
+    await prisma.user.update({ where: { id: user.id }, data: { wishlist: [prod.id] } });
+    const res = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.wishlist).toHaveLength(1);
+    expect(res.body.data.wishlist[0]).toMatchObject({ _id: prod.id, name: 'Wish' });
+  });
+});
+
+describe('GET /api/users/store/:slug', () => {
+  afterEach(async () => {
+    await prisma.product.deleteMany({});
+    await prisma.category.deleteMany({});
+    await prisma.user.deleteMany({});
+  });
+
+  it('returns the seller and their active products', async () => {
+    const slug = `shop-${Date.now()}${Math.random()}`;
+    const seller = await prisma.user.create({
+      data: { name: 'Seller', email: `sel${Date.now()}${Math.random()}@t.com`, role: 'seller', sellerProfile: { create: { storeName: 'My Shop', storeSlug: slug, isApproved: true } } },
+    });
+    const cat = await prisma.category.create({ data: { name: 'C', slug: `c-${Date.now()}${Math.random()}` } });
+    await prisma.product.create({ data: { name: 'Live', slug: `live-${Date.now()}${Math.random()}`, description: 'd', price: 5, status: 'active', categoryId: cat.id, sellerId: seller.id } });
+    await prisma.product.create({ data: { name: 'Draft', slug: `draft-${Date.now()}${Math.random()}`, description: 'd', price: 5, status: 'draft', categoryId: cat.id, sellerId: seller.id } });
+
+    const res = await request(app).get(`/api/users/store/${slug}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.seller.sellerProfile.storeName).toBe('My Shop');
+    expect(res.body.data.products).toHaveLength(1);
+    expect(res.body.data.products[0].name).toBe('Live');
+  });
+
+  it('404s an unknown store slug', async () => {
+    const res = await request(app).get('/api/users/store/nope-shop');
+    expect(res.status).toBe(404);
+  });
+});

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { prisma } = require('../config/prisma');
 const userService = require('../services/userService');
+const productService = require('../services/productService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { authLimiter } = require('../middleware');
@@ -169,9 +170,10 @@ const refreshToken = async (req, res, next) => {
 // @access  Private
 const getMe = async (req, res, next) => {
   try {
-    // NOTE: wishlist is returned as id strings until Plan 1C re-adds product population.
     const user = await userService.findById(req.user._id);
-    return ApiResponse.success(res, userService.toSafeObject(user), 'User fetched');
+    const safe = userService.toSafeObject(user);
+    safe.wishlist = await productService.getWishlistProducts(user.wishlist || []);
+    return ApiResponse.success(res, safe, 'User fetched');
   } catch (err) { next(err); }
 };
 

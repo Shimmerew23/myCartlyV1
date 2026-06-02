@@ -161,29 +161,36 @@ const updateSellerProfile = async (req, res, next) => {
 
 const getSellerStore = async (req, res, next) => {
   try {
-    const seller = await User.findOne({ 'sellerProfile.storeSlug': req.params.slug })
-      .select('name sellerProfile createdAt')
-      .lean();
-    if (!seller) return next(ApiError.notFound('Store not found'));
+    const profile = await prisma.sellerProfile.findUnique({
+      where: { storeSlug: req.params.slug },
+      include: { user: true },
+    });
+    if (!profile || !profile.user) return next(ApiError.notFound('Store not found'));
 
-    const products = await Product.find({ seller: seller._id, status: 'active' })
-      .sort('-createdAt')
-      .limit(20)
-      .lean();
+    const products = await prisma.product.findMany({
+      where: { sellerId: profile.userId, status: 'active' },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      include: { images: true, category: true },
+    });
 
-    return ApiResponse.success(res, { seller, products });
+    const seller = {
+      _id: profile.user.id,
+      id: profile.user.id,
+      name: profile.user.name,
+      createdAt: profile.user.createdAt,
+      sellerProfile: userService.serializeSellerProfile(profile),
+    };
+
+    return ApiResponse.success(res, { seller, products: products.map(productService.serializeProduct) });
   } catch (err) { next(err); }
 };
 
 const getWishlist = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id)
-      .populate({
-        path: 'wishlist',
-        select: 'name price images slug status rating',
-        populate: { path: 'category', select: 'name slug' },
-      });
-    return ApiResponse.success(res, user.wishlist);
+    const user = await prisma.user.findUnique({ where: { id: req.user._id }, select: { wishlist: true } });
+    const products = await productService.getWishlistProducts(user.wishlist || []);
+    return ApiResponse.success(res, products);
   } catch (err) { next(err); }
 };
 
