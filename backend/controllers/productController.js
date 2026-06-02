@@ -1,298 +1,253 @@
-const Product = require('../models/Product');
-const { Category } = require('../models/index');
+const { Prisma } = require('@prisma/client');
+const { prisma } = require('../config/prisma');
+const productService = require('../services/productService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
 const { deleteImage } = require('../config/cloudinary');
 
-// Helper: compute virtual fields lost when using .lean()
-const addProductVirtuals = (p) => {
-  const inStock = !p.trackInventory || p.stock > 0;
+const { serializeProduct, PRODUCT_INCLUDE } = productService;
 
-  let discountedPrice = p.price;
-  if (p.discount?.value) {
-    const now = new Date();
-    const fromOk = !p.discount.validFrom || now >= new Date(p.discount.validFrom);
-    const untilOk = !p.discount.validUntil || now <= new Date(p.discount.validUntil);
-    if (fromOk && untilOk) {
-      discountedPrice = p.discount.type === 'percentage'
-        ? Math.round(p.price * (1 - p.discount.value / 100) * 100) / 100
-        : Math.max(0, p.price - p.discount.value);
-    }
-  }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  return { ...p, inStock, discountedPrice };
-};
-
-// Build query filters from request
-const buildProductFilter = (query) => {
-  const filter = {};
-
-  if (query.search) {
-    filter.$text = { $search: query.search };
-  }
-  if (query.category) filter.category = query.category;
-  if (query.seller) filter.seller = query.seller;
-  if (query.brand) filter.brand = { $regex: query.brand, $options: 'i' };
-  if (query.tags) filter.tags = { $in: query.tags.split(',') };
-  if (query.status) filter.status = query.status;
-  if (query.featured === 'true') filter.isFeatured = true;
-  if (query.trending === 'true') filter.isTrending = true;
-  if (query.newArrival === 'true') filter.isNewArrival = true;
-  if (query.inStock === 'true') filter.stock = { $gt: 0 };
-
-  // Price range
+// Build a Prisma `where` for listing (non-search path).
+const buildProductWhere = (query) => {
+  const where = {};
+  if (query.category) where.categoryId = query.category;
+  if (query.seller) where.sellerId = query.seller;
+  if (query.brand) where.brand = { contains: query.brand, mode: 'insensitive' };
+  if (query.tags) where.tags = { hasSome: query.tags.split(',') };
+  if (query.status) where.status = query.status;
+  if (query.featured === 'true') where.isFeatured = true;
+  if (query.trending === 'true') where.isTrending = true;
+  if (query.newArrival === 'true') where.isNewArrival = true;
+  if (query.inStock === 'true') where.stock = { gt: 0 };
   if (query.minPrice || query.maxPrice) {
-    filter.price = {};
-    if (query.minPrice) filter.price.$gte = parseFloat(query.minPrice);
-    if (query.maxPrice) filter.price.$lte = parseFloat(query.maxPrice);
+    where.price = {};
+    if (query.minPrice) where.price.gte = parseFloat(query.minPrice);
+    if (query.maxPrice) where.price.lte = parseFloat(query.maxPrice);
   }
-
-  // Rating
-  if (query.rating) {
-    filter['rating.average'] = { $gte: parseFloat(query.rating) };
-  }
-
-  return filter;
+  if (query.rating) where.ratingAverage = { gte: parseFloat(query.rating) };
+  return where;
 };
 
-// Build sort object
-const buildSort = (sortStr, hasSearch) => {
-  const sortMap = {
-    '-createdAt': { createdAt: -1 },
-    createdAt: { createdAt: 1 },
-    '-price': { price: -1 },
-    price: { price: 1 },
-    '-rating': { 'rating.average': -1 },
-    '-sales': { sales: -1 },
-    '-views': { views: -1 },
-    name: { name: 1 },
-    '-name': { name: -1 },
-  };
-
-  if (hasSearch && !sortStr) {
-    return { score: { $meta: 'textScore' } };
-  }
-
-  return sortMap[sortStr] || { createdAt: -1 };
+// Build SQL filter fragments mirroring buildProductWhere for the FTS path.
+const buildSqlFilters = (query) => {
+  const f = [];
+  if (query.category) f.push(Prisma.sql`p."categoryId" = ${query.category}`);
+  if (query.seller) f.push(Prisma.sql`p."sellerId" = ${query.seller}`);
+  if (query.brand) f.push(Prisma.sql`p."brand" ILIKE ${`%${query.brand}%`}`);
+  if (query.status) f.push(Prisma.sql`p."status" = ${query.status}::"ProductStatus"`);
+  if (query.featured === 'true') f.push(Prisma.sql`p."isFeatured" = true`);
+  if (query.trending === 'true') f.push(Prisma.sql`p."isTrending" = true`);
+  if (query.newArrival === 'true') f.push(Prisma.sql`p."isNewArrival" = true`);
+  if (query.inStock === 'true') f.push(Prisma.sql`p."stock" > 0`);
+  if (query.minPrice) f.push(Prisma.sql`p."price" >= ${parseFloat(query.minPrice)}`);
+  if (query.maxPrice) f.push(Prisma.sql`p."price" <= ${parseFloat(query.maxPrice)}`);
+  if (query.rating) f.push(Prisma.sql`p."ratingAverage" >= ${parseFloat(query.rating)}`);
+  if (query.tags) f.push(Prisma.sql`p."tags" && ${query.tags.split(',')}`);
+  return f;
 };
 
-// @desc    Get all products (public)
-// @route   GET /api/products
+const SORT_MAP = {
+  '-createdAt': { createdAt: 'desc' },
+  createdAt: { createdAt: 'asc' },
+  '-price': { price: 'desc' },
+  price: { price: 'asc' },
+  '-rating': { ratingAverage: 'desc' },
+  '-sales': { sales: 'desc' },
+  '-views': { views: 'desc' },
+  name: { name: 'asc' },
+  '-name': { name: 'desc' },
+};
+
+// Re-order Prisma rows to match the id order returned by the FTS query.
+const orderByIds = (rows, ids) => {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+};
+
+// Coerce multipart string fields into numbers/booleans.
+const coerceProductScalars = (data) => {
+  ['price', 'compareAtPrice', 'stock', 'lowStockThreshold'].forEach((k) => {
+    if (data[k] !== undefined) data[k] = Number(data[k]);
+  });
+  ['isFeatured', 'isTrending', 'isNewArrival', 'trackInventory', 'hasVariants'].forEach((k) => {
+    if (data[k] !== undefined) data[k] = data[k] === true || data[k] === 'true';
+  });
+  return data;
+};
+
+// @desc Get all products (public)
+// @route GET /api/products
 const getProducts = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, parseInt(req.query.limit) || 20);
     const skip = (page - 1) * limit;
 
-    const filter = buildProductFilter(req.query);
+    const publicOnly = !req.user || req.user.role === 'user';
 
-    // Public only sees active products (unless admin/seller)
-    if (!req.user || req.user.role === 'user') {
-      filter.status = 'active';
+    let products;
+    let total;
+
+    if (req.query.search) {
+      const filters = buildSqlFilters(req.query);
+      if (publicOnly) filters.push(Prisma.sql`p."status" = 'active'::"ProductStatus"`);
+      const result = await productService.searchProductIds({ term: req.query.search, filters, skip, take: limit });
+      total = result.total;
+      const rows = await prisma.product.findMany({ where: { id: { in: result.ids } }, include: PRODUCT_INCLUDE });
+      products = orderByIds(rows, result.ids);
+    } else {
+      const where = buildProductWhere(req.query);
+      if (publicOnly) where.status = 'active';
+      const orderBy = SORT_MAP[req.query.sort] || { createdAt: 'desc' };
+      [products, total] = await Promise.all([
+        prisma.product.findMany({ where, orderBy, skip, take: limit, include: PRODUCT_INCLUDE }),
+        prisma.product.count({ where }),
+      ]);
     }
 
-    const sort = buildSort(req.query.sort, !!req.query.search);
-    const projection = req.query.search
-      ? { score: { $meta: 'textScore' } }
-      : {};
-
-    const [products, total] = await Promise.all([
-      Product.find(filter, projection)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .populate('category', 'name slug')
-        .populate('seller', 'name sellerProfile.storeName sellerProfile.storeLogo')
-        .lean(),
-      Product.countDocuments(filter),
-    ]);
-
-    return ApiResponse.paginated(res, products.map(addProductVirtuals), {
-      page,
-      limit,
-      total,
-      pages: Math.ceil(total / limit),
-      hasNext: page < Math.ceil(total / limit),
-      hasPrev: page > 1,
+    const pages = Math.ceil(total / limit);
+    return ApiResponse.paginated(res, products.map(serializeProduct), {
+      page, limit, total, pages, hasNext: page < pages, hasPrev: page > 1,
     });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Get single product
-// @route   GET /api/products/:slug
+// @desc Get single product
+// @route GET /api/products/:slug
 const getProduct = async (req, res, next) => {
   try {
     const { slug } = req.params;
-
     const cacheKey = `product:${slug}`;
     const cached = await cache.get(cacheKey);
     if (cached) return ApiResponse.success(res, cached);
 
-    const product = await Product.findOne({
-      $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
-    })
-      .populate('category', 'name slug parent')
-      .populate('seller', 'name sellerProfile createdAt')
-      .lean();
-
+    const or = [{ slug }];
+    if (UUID_RE.test(slug)) or.push({ id: slug });
+    const product = await prisma.product.findFirst({ where: { OR: or }, include: PRODUCT_INCLUDE });
     if (!product) return next(ApiError.notFound('Product not found'));
 
-    // Increment views (async, non-blocking)
-    Product.findByIdAndUpdate(product._id, { $inc: { views: 1 } }).exec();
+    // Increment views (non-blocking)
+    prisma.product.update({ where: { id: product.id }, data: { views: { increment: 1 } } }).catch(() => {});
 
-    const productWithVirtuals = addProductVirtuals(product);
-    await cache.set(cacheKey, productWithVirtuals, 300);
-    return ApiResponse.success(res, productWithVirtuals);
-  } catch (err) {
-    next(err);
-  }
+    const data = serializeProduct(product);
+    await cache.set(cacheKey, data, 300);
+    return ApiResponse.success(res, data);
+  } catch (err) { next(err); }
 };
 
-// @desc    Create product
-// @route   POST /api/products
-// @access  Seller/Admin
-// Reshape flat form fields into the nested structure the Product model expects
-const normalizeProductBody = (body) => {
-  const data = { ...body };
-
-  // tags: comma-separated string → array
-  if (typeof data.tags === 'string') {
-    data.tags = data.tags.split(',').map((t) => t.trim()).filter(Boolean);
-  }
-
-  // shipping: flat weight/isFreeShipping → nested object
-  if (data.weight !== undefined || data.isFreeShipping !== undefined) {
-    data.shipping = { weight: data.weight, isFreeShipping: data.isFreeShipping };
-    delete data.weight;
-    delete data.isFreeShipping;
-  }
-
-  // seo: flat metaTitle/metaDescription → nested object
-  if (data.metaTitle !== undefined || data.metaDescription !== undefined) {
-    data.seo = { metaTitle: data.metaTitle, metaDescription: data.metaDescription };
-    delete data.metaTitle;
-    delete data.metaDescription;
-  }
-
-  return data;
-};
-
+// @desc Create product
+// @route POST /api/products  (Seller/Admin)
 const createProduct = async (req, res, next) => {
   try {
-    const productData = { ...normalizeProductBody(req.body), seller: req.user._id };
+    const body = coerceProductScalars(productService.normalizeProductBody(req.body));
+    const categoryId = body.category;
 
-    // Process uploaded images
+    const data = {
+      name: body.name,
+      slug: await productService.generateUniqueSlug(body.name),
+      description: body.description,
+      shortDescription: body.shortDescription,
+      price: body.price,
+      compareAtPrice: body.compareAtPrice,
+      currency: body.currency || 'USD',
+      subcategory: body.subcategory,
+      tags: body.tags || [],
+      brand: body.brand,
+      sku: body.sku || productService.generateSku(),
+      stock: body.stock ?? 0,
+      status: body.status || 'draft',
+      isFeatured: body.isFeatured ?? false,
+      isTrending: body.isTrending ?? false,
+      isNewArrival: body.isNewArrival ?? false,
+      seo: body.seo ?? undefined,
+      shipping: body.shipping ?? undefined,
+      categoryId,
+      sellerId: req.user._id,
+    };
+
     if (req.processedImages?.length) {
-      productData.images = req.processedImages.map((img, i) => ({
-        url: img.url,
-        public_id: img.public_id,
-        alt: req.body.name,
-        isPrimary: i === 0,
-      }));
+      data.images = {
+        create: req.processedImages.map((img, i) => ({
+          url: img.url, publicId: img.public_id, alt: req.body.name, isPrimary: i === 0,
+        })),
+      };
     }
 
-    // Auto-generate SKU if not provided
-    if (!productData.sku) {
-      productData.sku = `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-    }
-
-    const product = await Product.create(productData);
-    await product.populate('category', 'name slug');
-
-    // Invalidate product cache
+    const product = await prisma.product.create({ data, include: PRODUCT_INCLUDE });
     await cache.flush('cache:products:*');
-
     logger.info(`Product created: ${product.name} by ${req.user.email}`);
-    return ApiResponse.created(res, product, 'Product created successfully');
-  } catch (err) {
-    next(err);
-  }
+    return ApiResponse.created(res, serializeProduct(product), 'Product created successfully');
+  } catch (err) { next(err); }
 };
 
-// @desc    Update product
-// @route   PUT /api/products/:id
-// @access  Seller (own) / Admin
+// @desc Update product
+// @route PUT /api/products/:id  (Seller own / Admin)
 const updateProduct = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: req.params.id }, include: { images: true } });
     if (!product) return next(ApiError.notFound('Product not found'));
 
-    // Ownership check
     const isAdmin = ['admin', 'superadmin'].includes(req.user.role);
-    if (!isAdmin && product.seller.toString() !== req.user._id.toString()) {
+    if (!isAdmin && product.sellerId !== req.user._id) {
       return next(ApiError.forbidden('You can only update your own products'));
     }
 
-    const updateData = normalizeProductBody(req.body);
+    const body = coerceProductScalars(productService.normalizeProductBody(req.body));
 
-    // Process new images if uploaded
+    const data = {};
+    ['name', 'description', 'shortDescription', 'price', 'compareAtPrice', 'currency',
+      'subcategory', 'brand', 'sku', 'stock', 'status', 'isFeatured', 'isTrending',
+      'isNewArrival'].forEach((k) => { if (body[k] !== undefined) data[k] = body[k]; });
+    if (body.tags !== undefined) data.tags = body.tags;
+    if (body.seo !== undefined) data.seo = body.seo;
+    if (body.shipping !== undefined) data.shipping = body.shipping;
+    if (body.category !== undefined) data.categoryId = body.category;
+
     if (req.processedImages?.length) {
       const newImages = req.processedImages.map((img, i) => ({
-        url: img.url,
-        public_id: img.public_id,
-        alt: updateData.name || product.name,
-        isPrimary: i === 0 && !product.images.length,
+        url: img.url, publicId: img.public_id, alt: body.name || product.name,
+        isPrimary: i === 0 && product.images.length === 0,
       }));
-
-      if (updateData.replaceImages === 'true') {
-        // Delete replaced images from Cloudinary
-        await Promise.all(product.images.map((img) => deleteImage(img.public_id)));
-        updateData.images = newImages;
-      } else {
-        updateData.images = [...product.images, ...newImages];
+      if (req.body.replaceImages === 'true') {
+        await Promise.all(product.images.map((img) => deleteImage(img.publicId)));
+        await prisma.productImage.deleteMany({ where: { productId: product.id } });
       }
+      data.images = { create: newImages };
     }
 
-    const updated = await Product.findByIdAndUpdate(
-      req.params.id,
-      { ...updateData, updatedAt: Date.now() },
-      { new: true, runValidators: true }
-    )
-      .populate('category', 'name slug')
-      .populate('seller', 'name sellerProfile.storeName');
-
-    // Invalidate cache
+    const updated = await prisma.product.update({ where: { id: product.id }, data, include: PRODUCT_INCLUDE });
     await cache.del(`product:${product.slug}`);
     await cache.flush('cache:products:*');
-
-    return ApiResponse.success(res, updated, 'Product updated successfully');
-  } catch (err) {
-    next(err);
-  }
+    return ApiResponse.success(res, serializeProduct(updated), 'Product updated successfully');
+  } catch (err) { next(err); }
 };
 
-// @desc    Delete product
-// @route   DELETE /api/products/:id
-// @access  Seller (own) / Admin
+// @desc Delete product (soft → archived)
+// @route DELETE /api/products/:id  (Seller own / Admin)
 const deleteProduct = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: req.params.id } });
     if (!product) return next(ApiError.notFound('Product not found'));
 
     const isAdmin = ['admin', 'superadmin'].includes(req.user.role);
-    if (!isAdmin && product.seller.toString() !== req.user._id.toString()) {
+    if (!isAdmin && product.sellerId !== req.user._id) {
       return next(ApiError.forbidden('You can only delete your own products'));
     }
 
-    // Soft delete — mark as archived
-    await Product.findByIdAndUpdate(req.params.id, { status: 'archived' });
-
+    await prisma.product.update({ where: { id: product.id }, data: { status: 'archived' } });
     await cache.del(`product:${product.slug}`);
     await cache.flush('cache:products:*');
-
     logger.info(`Product archived: ${product.name}`);
     return ApiResponse.success(res, null, 'Product deleted successfully');
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Get featured / trending products
-// @route   GET /api/products/featured
+// @desc Get featured / trending / new products
+// @route GET /api/products/featured
 const getFeaturedProducts = async (req, res, next) => {
   try {
     const cacheKey = 'products:featured';
@@ -300,157 +255,131 @@ const getFeaturedProducts = async (req, res, next) => {
     if (cached) return ApiResponse.success(res, cached);
 
     const [featured, trending, newArrivals] = await Promise.all([
-      Product.find({ isFeatured: true, status: 'active' })
-        .limit(8)
-        .populate('category', 'name slug')
-        .populate('seller', 'name sellerProfile.storeName')
-        .lean(),
-      Product.find({ isTrending: true, status: 'active' })
-        .sort({ sales: -1 })
-        .limit(12)
-        .populate('category', 'name slug')
-        .populate('seller', 'name sellerProfile.storeName')
-        .lean(),
-      Product.find({ isNewArrival: true, status: 'active' })
-        .sort({ createdAt: -1 })
-        .limit(8)
-        .populate('category', 'name slug')
-        .lean(),
+      prisma.product.findMany({ where: { isFeatured: true, status: 'active' }, take: 8, include: PRODUCT_INCLUDE }),
+      prisma.product.findMany({ where: { isTrending: true, status: 'active' }, orderBy: { sales: 'desc' }, take: 12, include: PRODUCT_INCLUDE }),
+      prisma.product.findMany({ where: { isNewArrival: true, status: 'active' }, orderBy: { createdAt: 'desc' }, take: 8, include: PRODUCT_INCLUDE }),
     ]);
 
     const data = {
-      featured: featured.map(addProductVirtuals),
-      trending: trending.map(addProductVirtuals),
-      newArrivals: newArrivals.map(addProductVirtuals),
+      featured: featured.map(serializeProduct),
+      trending: trending.map(serializeProduct),
+      newArrivals: newArrivals.map(serializeProduct),
     };
     await cache.set(cacheKey, data, 600);
     return ApiResponse.success(res, data);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Get seller's own products
-// @route   GET /api/products/my-products
-// @access  Seller
+// @desc Get seller's own products
+// @route GET /api/products/my-products  (Seller)
 const getMyProducts = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, parseInt(req.query.limit) || 20);
     const skip = (page - 1) * limit;
 
-    const filter = { seller: req.user._id };
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.search) filter.$text = { $search: req.query.search };
+    if (req.query.search) {
+      const filters = [Prisma.sql`p."sellerId" = ${req.user._id}`];
+      if (req.query.status) filters.push(Prisma.sql`p."status" = ${req.query.status}::"ProductStatus"`);
+      const result = await productService.searchProductIds({ term: req.query.search, filters, skip, take: limit });
+      const rows = await prisma.product.findMany({ where: { id: { in: result.ids } }, include: { category: true } });
+      const products = orderByIds(rows, result.ids);
+      return ApiResponse.paginated(res, products.map(serializeProduct), {
+        page, limit, total: result.total, pages: Math.ceil(result.total / limit),
+      });
+    }
+
+    const where = { sellerId: req.user._id };
+    if (req.query.status) where.status = req.query.status;
 
     const [products, total] = await Promise.all([
-      Product.find(filter)
-        .sort(req.query.sort || '-createdAt')
-        .skip(skip)
-        .limit(limit)
-        .populate('category', 'name')
-        .lean(),
-      Product.countDocuments(filter),
+      prisma.product.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit, include: { category: true } }),
+      prisma.product.count({ where }),
     ]);
 
-    return ApiResponse.paginated(res, products, {
-      page, limit, total,
-      pages: Math.ceil(total / limit),
+    return ApiResponse.paginated(res, products.map(serializeProduct), {
+      page, limit, total, pages: Math.ceil(total / limit),
     });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Get related products
-// @route   GET /api/products/:id/related
+// @desc Get related products
+// @route GET /api/products/:id/related
 const getRelatedProducts = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id).lean();
+    const product = await prisma.product.findUnique({ where: { id: req.params.id } });
     if (!product) return next(ApiError.notFound('Product not found'));
 
-    const related = await Product.find({
-      _id: { $ne: product._id },
-      category: product.category,
-      status: 'active',
-    })
-      .limit(6)
-      .populate('category', 'name slug')
-      .lean();
+    const related = await prisma.product.findMany({
+      where: { id: { not: product.id }, categoryId: product.categoryId, status: 'active' },
+      take: 6,
+      include: { category: true },
+    });
 
-    return ApiResponse.success(res, related.map(addProductVirtuals));
-  } catch (err) {
-    next(err);
-  }
+    return ApiResponse.success(res, related.map(serializeProduct));
+  } catch (err) { next(err); }
 };
 
-// @desc    Toggle wishlist
-// @route   POST /api/products/:id/wishlist
-// @access  Private
+// @desc Toggle wishlist
+// @route POST /api/products/:id/wishlist  (Private)
 const toggleWishlist = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const user = req.user;
-
-    const product = await Product.findById(id);
+    const product = await prisma.product.findUnique({ where: { id } });
     if (!product) return next(ApiError.notFound('Product not found'));
 
-    const isWishlisted = user.wishlist.some((p) => p.toString() === id);
-    const update = isWishlisted
-      ? { $pull: { wishlist: id } }
-      : { $addToSet: { wishlist: id } };
+    const user = await prisma.user.findUnique({ where: { id: req.user._id }, select: { wishlist: true } });
+    const isWishlisted = (user.wishlist || []).includes(id);
+    const nextWishlist = isWishlisted
+      ? user.wishlist.filter((x) => x !== id)
+      : [...(user.wishlist || []), id];
 
-    await require('../models/User').findByIdAndUpdate(user._id, update);
-    await Product.findByIdAndUpdate(id, {
-      $inc: { wishlistCount: isWishlisted ? -1 : 1 },
-    });
+    await prisma.user.update({ where: { id: req.user._id }, data: { wishlist: nextWishlist } });
+    await prisma.product.update({ where: { id }, data: { wishlistCount: { increment: isWishlisted ? -1 : 1 } } });
 
     return ApiResponse.success(res, { wishlisted: !isWishlisted });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// @desc    Get seller dashboard stats
-// @route   GET /api/products/seller-stats
-// @access  Seller
+// @desc Get seller dashboard stats
+// @route GET /api/products/seller-stats  (Seller)
 const getSellerStats = async (req, res, next) => {
   try {
     const sellerId = req.user._id;
 
-    const [productStats, revenueStats, topProducts] = await Promise.all([
-      Product.aggregate([
-        { $match: { seller: sellerId } },
-        {
-          $group: {
-            _id: '$status',
-            count: { $sum: 1 },
-            totalStock: { $sum: '$stock' },
-          },
-        },
-      ]),
-      Product.aggregate([
-        { $match: { seller: sellerId } },
-        {
-          $group: {
-            _id: null,
-            totalSales: { $sum: '$sales' },
-            totalRevenue: { $sum: '$revenue' },
-            totalViews: { $sum: '$views' },
-          },
-        },
-      ]),
-      Product.find({ seller: sellerId, status: 'active' })
-        .sort({ sales: -1 })
-        .limit(5)
-        .select('name price sales revenue images')
-        .lean(),
+    const [byStatus, totals, topProducts] = await Promise.all([
+      prisma.product.groupBy({
+        by: ['status'],
+        where: { sellerId },
+        _count: { _all: true },
+        _sum: { stock: true },
+      }),
+      prisma.product.aggregate({
+        where: { sellerId },
+        _sum: { sales: true, revenue: true, views: true },
+      }),
+      prisma.product.findMany({
+        where: { sellerId, status: 'active' },
+        orderBy: { sales: 'desc' },
+        take: 5,
+        include: { images: true },
+      }),
     ]);
 
-    return ApiResponse.success(res, { productStats, revenueStats, topProducts });
-  } catch (err) {
-    next(err);
-  }
+    const productStats = byStatus.map((g) => ({ _id: g.status, count: g._count._all, totalStock: g._sum.stock || 0 }));
+    const revenueStats = [{
+      _id: null,
+      totalSales: totals._sum.sales || 0,
+      totalRevenue: totals._sum.revenue || 0,
+      totalViews: totals._sum.views || 0,
+    }];
+
+    return ApiResponse.success(res, {
+      productStats,
+      revenueStats,
+      topProducts: topProducts.map(serializeProduct),
+    });
+  } catch (err) { next(err); }
 };
 
 module.exports = {
