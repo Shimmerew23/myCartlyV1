@@ -337,20 +337,22 @@ const auditLog = (action, resource) => {
     const originalJson = res.json.bind(res);
 
     res.json = async (data) => {
-      // Log after response
+      // Log after response (skipped in tests — no Mongo connection to block on)
       try {
-        await AuditLog.create({
-          user: req.user?._id,
-          action,
-          resource,
-          resourceId: req.params?.id,
-          method: req.method,
-          path: req.path,
-          statusCode: res.statusCode,
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          metadata: { query: req.query, body: sanitizeForLog(req.body) },
-        });
+        if (process.env.NODE_ENV !== 'test') {
+          await AuditLog.create({
+            user: req.user?._id,
+            action,
+            resource,
+            resourceId: req.params?.id,
+            method: req.method,
+            path: req.path,
+            statusCode: res.statusCode,
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+            metadata: { query: req.query, body: sanitizeForLog(req.body) },
+          });
+        }
       } catch (err) {
         logger.error(`Audit log failed: ${err.message}`);
       }

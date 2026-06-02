@@ -12,6 +12,7 @@ const sharp = require('sharp');
 const { uploadBuffer, deleteImage } = require('../config/cloudinary');
 const { prisma } = require('../config/prisma');
 const userService = require('../services/userService');
+const productService = require('../services/productService');
 
 // ============================================================
 // USER CONTROLLER
@@ -766,10 +767,19 @@ const deleteCoupon = async (req, res, next) => {
 const createCategory = async (req, res, next) => {
   try {
     const slug = slugify(req.body.name, { lower: true, strict: true });
-    const category = await Category.create({ ...req.body, slug });
+    const { name, description, image, icon, parent, sortOrder, seo } = req.body;
+    const category = await prisma.category.create({
+      data: {
+        name, slug,
+        description, image, icon,
+        parentId: parent || null,
+        sortOrder: sortOrder ?? 0,
+        seo: seo ?? undefined,
+      },
+    });
     await cache.del('categories:all');
     await cache.flush('cache:categories:*');
-    return ApiResponse.created(res, category);
+    return ApiResponse.created(res, productService.serializeCategory(category));
   } catch (err) { next(err); }
 };
 
@@ -779,26 +789,39 @@ const getCategories = async (req, res, next) => {
     const cached = await cache.get(cacheKey);
     if (cached) return ApiResponse.success(res, cached);
 
-    const categories = await Category.find({ isActive: true })
-      .sort('sortOrder name')
-      .lean();
-    await cache.set(cacheKey, categories, 600);
-    return ApiResponse.success(res, categories);
+    const categories = await prisma.category.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    const data = categories.map(productService.serializeCategory);
+    await cache.set(cacheKey, data, 600);
+    return ApiResponse.success(res, data);
   } catch (err) { next(err); }
 };
 
 const updateCategory = async (req, res, next) => {
   try {
-    const category = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const { name, description, image, icon, parent, sortOrder, isActive, seo } = req.body;
+    const data = {};
+    if (name !== undefined) data.name = name;
+    if (description !== undefined) data.description = description;
+    if (image !== undefined) data.image = image;
+    if (icon !== undefined) data.icon = icon;
+    if (parent !== undefined) data.parentId = parent || null;
+    if (sortOrder !== undefined) data.sortOrder = sortOrder;
+    if (isActive !== undefined) data.isActive = isActive;
+    if (seo !== undefined) data.seo = seo;
+
+    const category = await prisma.category.update({ where: { id: req.params.id }, data }).catch(() => null);
     if (!category) return next(ApiError.notFound('Category not found'));
     await cache.del('categories:all');
-    return ApiResponse.success(res, category, 'Category updated');
+    return ApiResponse.success(res, productService.serializeCategory(category), 'Category updated');
   } catch (err) { next(err); }
 };
 
 const deleteCategory = async (req, res, next) => {
   try {
-    await Category.findByIdAndUpdate(req.params.id, { isActive: false });
+    await prisma.category.update({ where: { id: req.params.id }, data: { isActive: false } }).catch(() => null);
     await cache.del('categories:all');
     return ApiResponse.success(res, null, 'Category deactivated');
   } catch (err) { next(err); }
