@@ -13,6 +13,7 @@ const { body, query, param, validationResult } = require('express-validator');
 
 const User = require('../models/User');
 const { AuditLog } = require('../models/index');
+const userService = require('../services/userService');
 const ApiError = require('../utils/ApiError');
 const { verifyAccessToken } = require('../utils/jwt');
 const { cache } = require('../config/redis');
@@ -46,18 +47,18 @@ const authenticate = async (req, res, next) => {
     // Verify token
     const decoded = verifyAccessToken(token);
 
-    // Fetch user
-    const user = await User.findById(decoded.id).select('-password -refreshToken');
+    // Fetch user (PostgreSQL via Prisma)
+    const user = await userService.findById(decoded.id);
     if (!user) return next(ApiError.unauthorized('User not found'));
     if (!user.isActive) return next(ApiError.forbidden('Account is deactivated'));
     if (user.isBanned) return next(ApiError.forbidden(`Account banned: ${user.banReason}`));
 
     // Check if password changed after token was issued
-    if (user.changedPasswordAfter(decoded.iat)) {
+    if (userService.changedPasswordAfter(user.passwordChangedAt, decoded.iat)) {
       return next(ApiError.unauthorized('Password changed recently. Please log in again.'));
     }
 
-    req.user = user;
+    req.user = userService.toReqUser(user);
     req.token = token;
     next();
   } catch (error) {
@@ -83,9 +84,9 @@ const optionalAuth = async (req, res, next) => {
 
     if (token) {
       const decoded = verifyAccessToken(token);
-      const user = await User.findById(decoded.id).select('-password');
+      const user = await userService.findById(decoded.id);
       if (user && user.isActive && !user.isBanned) {
-        req.user = user;
+        req.user = userService.toReqUser(user);
       }
     }
     next();
@@ -158,7 +159,7 @@ const createRateLimiter = (windowMs, max, message) =>
     standardHeaders: true,
     legacyHeaders: false,
     handler: (_req, _res, next) => next(ApiError.tooMany(message)),
-    skip: (req) => req.user?.role === 'superadmin', // Superadmin bypass
+    skip: (req) => process.env.NODE_ENV === 'test' || req.user?.role === 'superadmin', // Superadmin bypass; disabled in tests
   });
 
 // Auth routes have their own authLimiter with a stricter limit and a specific
@@ -172,6 +173,7 @@ const globalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) =>
+    process.env.NODE_ENV === 'test' ||
     req.path === '/auth/refresh' ||
     req.path === '/auth/logout' ||
     req.path === '/auth/login' ||

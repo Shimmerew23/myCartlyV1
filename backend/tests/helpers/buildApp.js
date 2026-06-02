@@ -1,0 +1,21 @@
+require('express-async-errors');
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const { authRouter, userRouter } = require('../../routes/index');
+const { errorHandler, notFound, addRequestMetadata } = require('../../middleware/index');
+
+// Minimal app for Supertest — mounts only the routers under test in Phase 1B.
+function buildApp() {
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use(express.json());
+  app.use(cookieParser());
+  app.use(addRequestMetadata);
+  app.use('/api/auth', authRouter);
+  app.use('/api/users', userRouter);
+  app.use(notFound);
+  app.use(errorHandler);
+  return app;
+}
+
+module.exports = { buildApp };
