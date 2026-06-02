@@ -42,7 +42,7 @@ no live-data ETL.
 ### Sub-plan progress
 - [x] **1A — Foundation:** Postgres in compose (host 5433), Prisma schema (19 tables) + initial migration, `connectPrisma` wired into boot, Jest+Supertest harness.
 - [x] **1B — Auth & Users:** `authenticate`/`optionalAuth`, full `authController`, Passport (Google/JWT), and user profile/address/seller-profile endpoints on Prisma. `userService` replaces Mongoose User instance methods. 45 backend tests green; frozen envelope verified. *(Wishlist population & seller-store deferred to 1C; rate limiters skip under `NODE_ENV=test`.)*
-- [ ] **1C — Products & Categories + search** (restore wishlist population & seller-store; tsvector/pg_trgm)
+- [x] **1C — Products & Categories + search:** `productController` (list/get/CRUD/featured/related/my/seller-stats/wishlist), category CRUD, wishlist list + seller storefront on Prisma; `tsvector` + GIN + `pg_trgm` full-text search; `getMe` wishlist population restored. 75 backend tests green.
 - [ ] **1D — Cart & Orders + coupons** (Prisma `$transaction` for order placement)
 - [ ] **1E — Reviews, carriers, warehouse, feedback, admin, audit** (complete Carrier/Warehouse models; audit cleanup job)
 - [ ] **1F — Seeder rewrite & Mongoose removal**
