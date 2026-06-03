@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { screen, waitFor } from '@testing-library/react';
@@ -10,11 +9,6 @@ import AdminOrders from './Orders';
 
 vi.mock('react-hot-toast', () => ({
   default: { error: vi.fn(), success: vi.fn() },
-}));
-
-vi.mock('react-helmet-async', () => ({
-  Helmet: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-  HelmetProvider: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
 
 const order = {
@@ -68,6 +62,9 @@ describe('AdminOrders refund dialog', () => {
     await user.click(screen.getByRole('button', { name: /issue refund/i }));
     await waitFor(() => expect(body).not.toBe('NOT_CALLED'));
     expect(body).toEqual({}); // no amount, no reason
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: /refund order/i })).not.toBeInTheDocument()
+    );
   });
 
   it('rejects a non-positive amount without calling the API', async () => {
@@ -100,5 +97,8 @@ describe('AdminOrders refund dialog', () => {
     await user.click(screen.getByRole('button', { name: /issue refund/i }));
     await waitFor(() => expect(body).not.toBeNull());
     expect(body).toEqual({ amount: 40, reason: 'damaged' });
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: /refund order/i })).not.toBeInTheDocument()
+    );
   });
 });

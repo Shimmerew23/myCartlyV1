@@ -4,6 +4,7 @@ import { configureStore } from '@reduxjs/toolkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { render } from '@testing-library/react';
+import { HelmetProvider } from 'react-helmet-async';
 import authReducer from '@/store/slices/authSlice';
 import { cartReducer } from '@/store/slices/cartSlice';
 import productReducer from '@/store/slices/productSlice';
@@ -39,11 +40,13 @@ export function renderWithProviders(ui: ReactElement, opts: Options = {}) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const result = render(
-    <Provider store={store}>
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>
-      </QueryClientProvider>
-    </Provider>
+    <HelmetProvider>
+      <Provider store={store}>
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>
+        </QueryClientProvider>
+      </Provider>
+    </HelmetProvider>
   );
   return { store, queryClient, ...result };
 }

@@ -110,7 +110,7 @@ describe('401 -> refresh -> retry', () => {
       http.post(`${API_BASE}/auth/refresh`, () => new HttpResponse(null, { status: 401 }))
     );
     const { apiGet } = await freshApi();
-    await expect(apiGet('/secure')).rejects.toBeDefined();
+    await expect(apiGet('/secure')).rejects.toMatchObject({ message: expect.any(String) });
     expect(localStorage.getItem('accessToken')).toBeNull();
     expect(onLogout).toHaveBeenCalledTimes(1);
     window.removeEventListener('auth:logout', onLogout);
@@ -130,7 +130,23 @@ describe('auth endpoints are excluded from refresh-retry', () => {
       })
     );
     const { apiPost } = await freshApi();
-    await expect(apiPost('/auth/login', { email: 'a@b.c', password: 'x' })).rejects.toBeDefined();
+    await expect(apiPost('/auth/login', { email: 'a@b.c', password: 'x' })).rejects.toMatchObject({ message: expect.any(String) });
+    expect(refreshCount).toBe(0);
+  });
+
+  it('does not call refresh when /auth/register returns 401', async () => {
+    let refreshCount = 0;
+    server.use(
+      http.post(`${API_BASE}/auth/register`, () =>
+        HttpResponse.json({ message: 'Email already in use' }, { status: 401 })
+      ),
+      http.post(`${API_BASE}/auth/refresh`, () => {
+        refreshCount += 1;
+        return HttpResponse.json({ data: { accessToken: 'x' } });
+      })
+    );
+    const { apiPost } = await freshApi();
+    await expect(apiPost('/auth/register', { name: 'A', email: 'a@b.c', password: 'x' })).rejects.toMatchObject({ message: expect.any(String) });
     expect(refreshCount).toBe(0);
   });
 });

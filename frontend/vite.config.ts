@@ -14,6 +14,7 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     css: false,
     passWithNoTests: true,
+    clearMocks: true,
     env: {
       VITE_API_URL: 'http://localhost:5000/api',
     },

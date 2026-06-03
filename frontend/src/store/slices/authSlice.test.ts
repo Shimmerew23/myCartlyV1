@@ -82,6 +82,6 @@ describe('login thunk', () => {
     const state = store.getState().auth;
     expect(state.isAuthenticated).toBe(false);
     expect(state.isLoading).toBe(false);
-    expect(state.error).toBeTruthy();
+    expect(state.error).toBe('Bad creds');
   });
 });

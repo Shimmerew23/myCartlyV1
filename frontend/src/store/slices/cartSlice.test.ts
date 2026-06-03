@@ -64,4 +64,20 @@ describe('cartSlice math', () => {
     );
     expect(start.selectedItemIds).toEqual(['1']);
   });
+
+  it('preserves an existing coupon when a mutation response omits coupon', () => {
+    const start = cartReducer(
+      { items: [], subtotal: 0, itemCount: 0, isLoading: false, isOpen: false, selectedItemIds: [], coupon: { code: 'SAVE10', discountType: 'percentage', discountValue: 10, validUntil: '2099-01-01' } } as never,
+      addToCart.fulfilled(cartPayload([item('1', 10, 1)]) as never, '', { productId: 'p1', quantity: 1 })
+    );
+    expect(start.coupon).toEqual({ code: 'SAVE10', discountType: 'percentage', discountValue: 10, validUntil: '2099-01-01' });
+  });
+
+  it('clears the coupon when fetchCart returns coupon: null', () => {
+    const start = cartReducer(
+      { items: [], subtotal: 0, itemCount: 0, isLoading: false, isOpen: false, selectedItemIds: [], coupon: { code: 'SAVE10', discountType: 'percentage', discountValue: 10, validUntil: '2099-01-01' } } as never,
+      fetchCart.fulfilled({ items: [item('1', 10, 1)], subtotal: 10, itemCount: 1, coupon: null } as never, '', undefined)
+    );
+    expect(start.coupon).toBeUndefined();
+  });
 });
