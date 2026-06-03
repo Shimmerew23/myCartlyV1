@@ -33,6 +33,8 @@ Run these from inside `backend/` or `frontend/` respectively.
 
 Backend requires `backend/.env` (copy from `backend/.env.example`). It needs `DATABASE_URL` (PostgreSQL), Redis, and Cloudinary credentials. Redis and Cloudinary failures are non-fatal (graceful degradation); a PostgreSQL connection failure aborts startup (it is the system of record). Tests use a separate database via `backend/.env.test` (`DATABASE_URL` → `cartly_test`).
 
+**CI** — `.github/workflows/ci.yml` (Phase 3A) gates merges into `main`: a **backend** job spins up a Postgres 16 service, runs `prisma generate` + the Jest suite (migrations applied by `tests/setup.js`'s `beforeAll`; `.env.test` is gitignored so the workflow supplies `DATABASE_URL`/JWT/session env directly), and a **frontend** job runs `npm run lint` + `npm run build`. Triggers on push to `develop` and PRs into `main`. The frontend ESLint config is `frontend/.eslintrc.cjs` (legacy ESLint 8 format; `exhaustive-deps` and `no-explicit-any` are deliberately off with deferral comments — see the file). Run `npm run lint` and `npm run build` before declaring frontend work done; both are clean as of 3A (the old `seller/Profile.tsx` / `seller/EditProduct.tsx` type errors are fixed).
+
 ## Architecture
 
 ### Backend — consolidated "barrel" modules
