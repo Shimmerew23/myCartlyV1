@@ -5,8 +5,8 @@ import { logout } from '@/store/slices/authSlice';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Package, ShoppingCart, Tag,
-  Ticket, FileText, Truck, LogOut, Menu, X, ChevronRight,
-  Bell, Settings, Shield, MessageSquare, Warehouse
+  Ticket, FileText, Truck, LogOut, Menu, ChevronRight,
+  Bell, Shield, MessageSquare, Warehouse
 } from 'lucide-react';
 
 const adminNav = [

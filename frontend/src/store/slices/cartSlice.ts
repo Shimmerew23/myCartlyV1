@@ -3,7 +3,7 @@
 // ============================================================
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import api from '@/api/axios';
-import { Cart, CartItem } from '@/types';
+import { Cart } from '@/types';
 import toast from 'react-hot-toast';
 
 interface CartState extends Cart {
@@ -229,7 +229,7 @@ export const uiReducer = uiSlice.reducer;
 // PRODUCT SLICE
 // ============================================================
 
-import { Product, ProductFilters, PaginatedResponse } from '@/types';
+import { Product, ProductFilters } from '@/types';
 
 interface ProductState {
   products: Product[];

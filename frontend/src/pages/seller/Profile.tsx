@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Store, Upload, BarChart2, Package, DollarSign, Star, Globe, Instagram, Twitter, Save } from 'lucide-react';
 import { useAppSelector, useAppDispatch } from '@/store';

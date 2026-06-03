@@ -7,7 +7,7 @@ import { toggleCart } from '@/store/slices/cartSlice';
 import {
   ShoppingBag, Search, User, Menu, X, ChevronDown,
   LogOut, Package, Heart, Settings, LayoutDashboard,
-  Store, Bell, Shield, MessageSquare
+  Store, Shield, MessageSquare
 } from 'lucide-react';
 import api from '@/api/axios';
 import { Product } from '@/types';

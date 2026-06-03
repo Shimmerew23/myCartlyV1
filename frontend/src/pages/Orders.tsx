@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, ChevronRight, Search } from 'lucide-react';
+import { Package, ChevronRight } from 'lucide-react';
 import api from '@/api/axios';
 import { Order } from '@/types';
 import { Helmet } from 'react-helmet-async';
