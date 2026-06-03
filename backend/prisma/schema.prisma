@@ -318,6 +318,7 @@ model Order {
   preferredCarrier   String?
   cancelledAt        DateTime?
   cancellationReason String?
+  returnReason       String?
   deliveredAt        DateTime?
   customerNote       String?
   internalNote       String?

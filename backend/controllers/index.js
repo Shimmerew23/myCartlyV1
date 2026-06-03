@@ -13,6 +13,7 @@ const { uploadBuffer, deleteImage } = require('../config/cloudinary');
 const { prisma } = require('../config/prisma');
 const userService = require('../services/userService');
 const productService = require('../services/productService');
+const cartService = require('../services/cartService');
 
 // ============================================================
 // USER CONTROLLER
@@ -199,189 +200,143 @@ const getWishlist = async (req, res, next) => {
 // ============================================================
 
 const getCart = async (req, res, next) => {
-  try {
-    let cart = await Cart.findOne({ user: req.user._id })
-      .populate({
-        path: 'items.product',
-        select: 'name price images slug status stock discountedPrice rating seller',
-        populate: [
-          { path: 'category', select: 'name' },
-          { path: 'seller', select: 'name sellerProfile.storeName sellerProfile.storeLogo' },
-        ],
-      });
+  const { cart, productMap, payload } = await cartService.loadSerializedCart(req.user._id);
 
-    if (!cart) {
-      cart = await Cart.create({ user: req.user._id, items: [] });
-    }
+  // Filter out unavailable products (missing or not active) and persist removal.
+  const invalidIds = (cart.items || [])
+    .filter((i) => { const p = productMap.get(i.productId); return !p || p.status !== 'active'; })
+    .map((i) => i.id);
 
-    // Filter out unavailable products
-    const validItems = cart.items.filter(
-      (item) => item.product && item.product.status === 'active'
-    );
-    if (validItems.length !== cart.items.length) {
-      cart.items = validItems;
-      await cart.save();
-    }
+  if (invalidIds.length) {
+    await prisma.cartItem.deleteMany({ where: { id: { in: invalidIds } } });
+    const reloaded = await cartService.loadSerializedCart(req.user._id);
+    return ApiResponse.success(res, reloaded.payload);
+  }
 
-    return ApiResponse.success(res, {
-      items: cart.items,
-      subtotal: cart.subtotal,
-      itemCount: cart.itemCount,
-      coupon: cart.coupon?.code ? cart.coupon : null,
-    });
-  } catch (err) { next(err); }
+  return ApiResponse.success(res, payload);
 };
 
 const addToCart = async (req, res, next) => {
-  try {
-    const { productId, quantity = 1, variant } = req.body;
+  const { productId, quantity = 1, variant } = req.body;
 
-    const product = await Product.findById(productId);
-    if (!product) return next(ApiError.notFound('Product not found'));
-    if (product.status !== 'active') return next(ApiError.badRequest('Product unavailable'));
-    if (product.trackInventory && product.stock < quantity) {
-      return next(ApiError.badRequest(`Only ${product.stock} items in stock`));
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) return next(ApiError.notFound('Product not found'));
+  if (product.status !== 'active') return next(ApiError.badRequest('Product unavailable'));
+  if (product.trackInventory && product.stock < quantity) {
+    return next(ApiError.badRequest(`Only ${product.stock} items in stock`));
+  }
+
+  const cart = await cartService.getOrCreateCart(req.user._id);
+  const existing = (cart.items || []).find(
+    (item) => item.productId === productId && (item.variantValue ?? undefined) === (variant?.value ?? undefined)
+  );
+
+  if (existing) {
+    const newQty = existing.quantity + quantity;
+    if (product.trackInventory && newQty > product.stock) {
+      return next(ApiError.badRequest(`Only ${product.stock} items available`));
     }
-
-    let cart = await Cart.findOne({ user: req.user._id });
-    if (!cart) cart = await Cart.create({ user: req.user._id, items: [] });
-
-    const existingItemIndex = cart.items.findIndex(
-      (item) =>
-        item.product.toString() === productId &&
-        item.variant?.value === variant?.value
-    );
-
-    if (existingItemIndex > -1) {
-      const newQty = cart.items[existingItemIndex].quantity + quantity;
-      if (product.trackInventory && newQty > product.stock) {
-        return next(ApiError.badRequest(`Only ${product.stock} items available`));
-      }
-      cart.items[existingItemIndex].quantity = newQty;
-    } else {
-      cart.items.push({
-        product: productId,
+    await prisma.cartItem.update({ where: { id: existing.id }, data: { quantity: newQty } });
+  } else {
+    const snapshot = productService.computeDiscountedPrice(product.price, product.discount) || product.price;
+    await prisma.cartItem.create({
+      data: {
+        cartId: cart.id,
+        productId,
         quantity,
-        variant,
-        price: product.discountedPrice || product.price,
-      });
-    }
-
-    cart.lastModified = Date.now();
-    await cart.save();
-    await cart.populate({
-      path: 'items.product',
-      select: 'name price images slug status stock',
-      populate: { path: 'seller', select: 'name sellerProfile.storeName sellerProfile.storeLogo' },
+        variantName: variant?.name,
+        variantValue: variant?.value,
+        price: snapshot,
+      },
     });
+  }
 
-    return ApiResponse.success(res, {
-      items: cart.items,
-      subtotal: cart.subtotal,
-      itemCount: cart.itemCount,
-    }, 'Added to cart');
-  } catch (err) { next(err); }
+  await prisma.cart.update({ where: { id: cart.id }, data: { lastModified: new Date() } });
+  const { payload } = await cartService.loadSerializedCart(req.user._id);
+  return ApiResponse.success(res, payload, 'Added to cart');
 };
 
 const updateCartItem = async (req, res, next) => {
-  try {
-    const { quantity } = req.body;
-    const cart = await Cart.findOne({ user: req.user._id });
-    if (!cart) return next(ApiError.notFound('Cart not found'));
+  const { quantity } = req.body;
+  const cart = await cartService.getOrCreateCart(req.user._id);
+  const item = (cart.items || []).find((i) => i.id === req.params.itemId);
+  if (!item) return next(ApiError.notFound('Cart item not found'));
 
-    const item = cart.items.id(req.params.itemId);
-    if (!item) return next(ApiError.notFound('Cart item not found'));
-
-    if (quantity <= 0) {
-      cart.items = cart.items.filter((i) => i._id.toString() !== req.params.itemId);
-    } else {
-      const product = await Product.findById(item.product);
-      if (product?.trackInventory && quantity > product.stock) {
-        return next(ApiError.badRequest(`Only ${product.stock} items available`));
-      }
-      item.quantity = quantity;
+  if (quantity <= 0) {
+    await prisma.cartItem.delete({ where: { id: item.id } });
+  } else {
+    const product = await prisma.product.findUnique({ where: { id: item.productId } });
+    if (product?.trackInventory && quantity > product.stock) {
+      return next(ApiError.badRequest(`Only ${product.stock} items available`));
     }
+    await prisma.cartItem.update({ where: { id: item.id }, data: { quantity } });
+  }
 
-    await cart.save();
-    await cart.populate({
-      path: 'items.product',
-      select: 'name price images slug status',
-      populate: { path: 'seller', select: 'name sellerProfile.storeName sellerProfile.storeLogo' },
-    });
-
-    return ApiResponse.success(res, {
-      items: cart.items,
-      subtotal: cart.subtotal,
-      itemCount: cart.itemCount,
-    });
-  } catch (err) { next(err); }
+  const { payload } = await cartService.loadSerializedCart(req.user._id);
+  return ApiResponse.success(res, payload);
 };
 
 const removeFromCart = async (req, res, next) => {
-  try {
-    const cart = await Cart.findOneAndUpdate(
-      { user: req.user._id },
-      { $pull: { items: { _id: req.params.itemId } } },
-      { new: true }
-    ).populate({
-      path: 'items.product',
-      select: 'name price images slug',
-      populate: { path: 'seller', select: 'name sellerProfile.storeName sellerProfile.storeLogo' },
-    });
-
-    return ApiResponse.success(res, {
-      items: cart?.items || [],
-      subtotal: cart?.subtotal || 0,
-      itemCount: cart?.itemCount || 0,
-    }, 'Item removed');
-  } catch (err) { next(err); }
+  await prisma.cartItem.deleteMany({
+    where: { id: req.params.itemId, cart: { userId: req.user._id } },
+  });
+  const { payload } = await cartService.loadSerializedCart(req.user._id);
+  return ApiResponse.success(res, payload, 'Item removed');
 };
 
 const clearCart = async (req, res, next) => {
-  try {
-    await Cart.findOneAndUpdate({ user: req.user._id }, { items: [], coupon: undefined });
-    return ApiResponse.success(res, null, 'Cart cleared');
-  } catch (err) { next(err); }
+  const cart = await prisma.cart.findUnique({ where: { userId: req.user._id } });
+  if (cart) {
+    await prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
+    await prisma.cart.update({
+      where: { id: cart.id },
+      data: { couponCode: null, couponType: null, couponValue: null, couponValidUntil: null },
+    });
+  }
+  return ApiResponse.success(res, null, 'Cart cleared');
 };
 
 const applyCoupon = async (req, res, next) => {
-  try {
-    const { code } = req.body;
-    const coupon = await Coupon.findOne({ code: code.toUpperCase(), isActive: true });
+  const { code } = req.body;
+  const coupon = await prisma.coupon.findFirst({ where: { code: code.toUpperCase(), isActive: true } });
 
-    if (!coupon) return next(ApiError.notFound('Invalid coupon code'));
-    if (coupon.validUntil < new Date()) return next(ApiError.badRequest('Coupon has expired'));
-    if (coupon.validFrom > new Date()) return next(ApiError.badRequest('Coupon not yet active'));
-    if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
-      return next(ApiError.badRequest('Coupon usage limit reached'));
-    }
+  if (!coupon) return next(ApiError.notFound('Invalid coupon code'));
+  if (coupon.validUntil < new Date()) return next(ApiError.badRequest('Coupon has expired'));
+  if (coupon.validFrom > new Date()) return next(ApiError.badRequest('Coupon not yet active'));
+  if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
+    return next(ApiError.badRequest('Coupon usage limit reached'));
+  }
 
-    const userUsage = coupon.usedBy.filter(
-      (u) => u.user.toString() === req.user._id.toString()
-    ).length;
-    if (userUsage >= coupon.userUsageLimit) {
-      return next(ApiError.badRequest('You have already used this coupon'));
-    }
+  const userUsage = await prisma.couponUsage.count({ where: { couponId: coupon.id, userId: req.user._id } });
+  if (userUsage >= coupon.userUsageLimit) {
+    return next(ApiError.badRequest('You have already used this coupon'));
+  }
 
-    const cart = await Cart.findOne({ user: req.user._id });
-    if (!cart) return next(ApiError.notFound('Cart not found'));
+  const cart = await prisma.cart.findUnique({ where: { userId: req.user._id }, include: { items: true } });
+  if (!cart) return next(ApiError.notFound('Cart not found'));
 
-    if (cart.subtotal < coupon.minimumOrderAmount) {
-      return next(ApiError.badRequest(
-        `Minimum order amount is $${coupon.minimumOrderAmount}`
-      ));
-    }
+  const subtotal = cartService.computeSubtotal(cart.items || []);
+  if (subtotal < coupon.minimumOrderAmount) {
+    return next(ApiError.badRequest(`Minimum order amount is $${coupon.minimumOrderAmount}`));
+  }
 
-    cart.coupon = {
-      code: coupon.code,
-      discountType: coupon.discountType,
-      discountValue: coupon.discountValue,
-      validUntil: coupon.validUntil,
-    };
-    await cart.save();
+  await prisma.cart.update({
+    where: { id: cart.id },
+    data: {
+      couponCode: coupon.code,
+      couponType: coupon.discountType,
+      couponValue: coupon.discountValue,
+      couponValidUntil: coupon.validUntil,
+    },
+  });
 
-    return ApiResponse.success(res, { coupon: cart.coupon, subtotal: cart.subtotal });
-  } catch (err) { next(err); }
+  const couponPayload = {
+    code: coupon.code,
+    discountType: coupon.discountType,
+    discountValue: coupon.discountValue,
+    validUntil: coupon.validUntil,
+  };
+  return ApiResponse.success(res, { coupon: couponPayload, subtotal });
 };
 
 // ============================================================
@@ -749,25 +704,61 @@ const getAuditLogs = async (req, res, next) => {
 };
 
 // Coupon management
+const serializeCoupon = (c) => ({
+  _id: c.id,
+  id: c.id,
+  code: c.code,
+  description: c.description ?? undefined,
+  discountType: c.discountType,
+  discountValue: c.discountValue,
+  minimumOrderAmount: c.minimumOrderAmount,
+  maximumDiscountAmount: c.maximumDiscountAmount ?? undefined,
+  usageLimit: c.usageLimit ?? undefined,
+  usageCount: c.usageCount,
+  userUsageLimit: c.userUsageLimit,
+  usedBy: (c.usedBy || []).map((u) => ({ user: u.userId, usedAt: u.usedAt })),
+  validFrom: c.validFrom,
+  validUntil: c.validUntil,
+  isActive: c.isActive,
+  applicableCategories: c.applicableCategories || [],
+  applicableProducts: c.applicableProducts || [],
+  createdBy: c.createdById ?? undefined,
+  createdAt: c.createdAt,
+  updatedAt: c.updatedAt,
+});
+
 const createCoupon = async (req, res, next) => {
-  try {
-    const coupon = await Coupon.create({ ...req.body, createdBy: req.user._id });
-    return ApiResponse.created(res, coupon, 'Coupon created');
-  } catch (err) { next(err); }
+  const b = req.body;
+  const coupon = await prisma.coupon.create({
+    data: {
+      code: String(b.code).toUpperCase(),
+      description: b.description,
+      discountType: b.discountType,
+      discountValue: b.discountValue,
+      minimumOrderAmount: b.minimumOrderAmount,
+      maximumDiscountAmount: b.maximumDiscountAmount,
+      usageLimit: b.usageLimit,
+      userUsageLimit: b.userUsageLimit,
+      validFrom: new Date(b.validFrom),
+      validUntil: new Date(b.validUntil),
+      isActive: b.isActive,
+      applicableCategories: b.applicableCategories || [],
+      applicableProducts: b.applicableProducts || [],
+      createdById: req.user._id,
+    },
+    include: { usedBy: true },
+  });
+  return ApiResponse.created(res, serializeCoupon(coupon), 'Coupon created');
 };
 
 const getCoupons = async (req, res, next) => {
-  try {
-    const coupons = await Coupon.find().sort('-createdAt').lean();
-    return ApiResponse.success(res, coupons);
-  } catch (err) { next(err); }
+  const coupons = await prisma.coupon.findMany({ orderBy: { createdAt: 'desc' }, include: { usedBy: true } });
+  return ApiResponse.success(res, coupons.map(serializeCoupon));
 };
 
 const deleteCoupon = async (req, res, next) => {
-  try {
-    await Coupon.findByIdAndDelete(req.params.id);
-    return ApiResponse.success(res, null, 'Coupon deleted');
-  } catch (err) { next(err); }
+  await prisma.coupon.deleteMany({ where: { id: req.params.id } });
+  return ApiResponse.success(res, null, 'Coupon deleted');
 };
 
 // Category management
