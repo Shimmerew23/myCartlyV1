@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-CartLy — a full-stack eCommerce platform: an **Express + PostgreSQL/Prisma** API (`backend/`) and a **React + TypeScript + Vite** SPA (`frontend/`). Two independent npm packages; there is no root package.json or monorepo tooling — each directory is managed separately. The backend has a **Jest + Supertest** integration suite (`backend/tests/`); the frontend has no test suite yet.
+CartLy — a full-stack eCommerce platform: an **Express + PostgreSQL/Prisma** API (`backend/`) and a **React + TypeScript + Vite** SPA (`frontend/`). Two independent npm packages; there is no root package.json or monorepo tooling — each directory is managed separately. The backend has a **Jest + Supertest** integration suite (`backend/tests/`); the frontend has a **Vitest + React Testing Library** suite (`frontend/src/**/*.test.ts(x)`, MSW for HTTP) added in Phase 3B.
 
 > The data layer was migrated from MongoDB/Mongoose to PostgreSQL/Prisma in Phase 1 (see `docs/ROADMAP.md` and `docs/superpowers/plans/`). Mongoose is fully removed. Some older docs/README sections may still say "MERN/MongoDB" — the code is the source of truth.
 
@@ -22,7 +22,8 @@ Run these from inside `backend/` or `frontend/` respectively.
 **Frontend** (`cd frontend`)
 - `npm run dev` — Vite dev server on `http://localhost:5173` (`--host` exposes it on the LAN)
 - `npm run build` — type-check + production build
-- `npm run lint` — ESLint (`--max-warnings 0`; this is the only static-check gate, run it before declaring frontend work done)
+- `npm run lint` — ESLint (`--max-warnings 0`; static-check gate, run it before declaring frontend work done)
+- `npm test` — Vitest in watch mode · `npm run test:run` — single run (used by CI). Tests are co-located `*.test.ts(x)`; harness + MSW server live in `src/test/` with `vitest.setup.ts` at the frontend root (installs an in-memory `localStorage` polyfill — this vitest+jsdom env exposes none). `renderWithProviders` (`src/test/`) wraps components in the real Redux store + React Query + Router + HelmetProvider.
 - `npm run preview` — serve the built bundle
 
 **Full stack via Docker** (from repo root)
@@ -33,7 +34,7 @@ Run these from inside `backend/` or `frontend/` respectively.
 
 Backend requires `backend/.env` (copy from `backend/.env.example`). It needs `DATABASE_URL` (PostgreSQL), Redis, and Cloudinary credentials. Redis and Cloudinary failures are non-fatal (graceful degradation); a PostgreSQL connection failure aborts startup (it is the system of record). Tests use a separate database via `backend/.env.test` (`DATABASE_URL` → `cartly_test`).
 
-**CI** — `.github/workflows/ci.yml` (Phase 3A) gates merges into `main`: a **backend** job spins up a Postgres 16 service, runs `prisma generate` + the Jest suite (migrations applied by `tests/setup.js`'s `beforeAll`; `.env.test` is gitignored so the workflow supplies env directly — the JWT signing secret env var is **`JWT_SECRET`**, the canonical name `utils/jwt.js` reads, *not* `JWT_ACCESS_SECRET`), and a **frontend** job runs `npm run lint` + `npm run build`. Triggers on push to `develop` and PRs into `main`. The repo is **public**, and `main` has **branch protection** requiring both the `Backend (Prisma + Jest)` and `Frontend (Lint + Build)` checks (strict / up-to-date) — so landing develop→main goes through a PR with green CI. The frontend ESLint config is `frontend/.eslintrc.cjs` (legacy ESLint 8 format; `exhaustive-deps` and `no-explicit-any` are deliberately off with deferral comments — see the file). Run `npm run lint` and `npm run build` before declaring frontend work done; both are clean as of 3A (the old `seller/Profile.tsx` / `seller/EditProduct.tsx` type errors are fixed).
+**CI** — `.github/workflows/ci.yml` (Phase 3A) gates merges into `main`: a **backend** job spins up a Postgres 16 service, runs `prisma generate` + the Jest suite (migrations applied by `tests/setup.js`'s `beforeAll`; `.env.test` is gitignored so the workflow supplies env directly — the JWT signing secret env var is **`JWT_SECRET`**, the canonical name `utils/jwt.js` reads, *not* `JWT_ACCESS_SECRET`), and a **frontend** job runs `npm run lint` + `npm run test:run` (Vitest) + `npm run build`. Triggers on push to `develop` and PRs into `main`. The repo is **public**, and `main` has **branch protection** requiring both the `Backend (Prisma + Jest)` and `Frontend (Lint + Build)` checks (strict / up-to-date) — so landing develop→main goes through a PR with green CI. The frontend ESLint config is `frontend/.eslintrc.cjs` (legacy ESLint 8 format; `exhaustive-deps` and `no-explicit-any` are deliberately off with deferral comments — see the file). Run `npm run lint` and `npm run build` before declaring frontend work done; both are clean as of 3A (the old `seller/Profile.tsx` / `seller/EditProduct.tsx` type errors are fixed).
 
 ## Architecture
 
