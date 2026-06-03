@@ -45,10 +45,9 @@ enum PaymentStatus {
 }
 
 enum PaymentMethod {
-  stripe // removed in Phase 2; kept in Phase 1 to preserve the contract
   paypal
+  gcash
   cod
-  bank_transfer
 }
 
 enum DiscountType {
@@ -148,7 +147,6 @@ model SellerProfile {
   bankAccountNumber   String? // encrypted at app level
   bankRoutingNumber   String? // encrypted at app level
   bankName            String?
-  stripeAccountId     String? // removed in Phase 2
   storeEmail          String?
   storePhone          String?
   returnPolicy        String?

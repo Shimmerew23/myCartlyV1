@@ -62,7 +62,7 @@ describe('POST /api/orders (createOrder)', () => {
 
     const res = await placeOrder(buyerToken);
     expect(res.status).toBe(201);
-    expect(res.body.data.clientSecret).toBeNull();
+    expect(res.body.data.payment).toMatchObject({ provider: 'cod', status: 'pending' });
     const order = res.body.data.order;
     expect(order._id).toBeDefined();
     expect(order.orderNumber).toMatch(/^CUR-\d+-\d{6}$/);

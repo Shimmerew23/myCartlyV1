@@ -62,7 +62,7 @@ const LoginPage = () => {
             <div className="space-y-6 border-t border-white/10 pt-10">
               {[
                 { icon: '✦', title: 'Curated Selection', desc: 'Hand-picked products from verified sellers' },
-                { icon: '⬡', title: 'Secure Payments', desc: 'Stripe-powered with end-to-end encryption' },
+                { icon: '⬡', title: 'Secure Payments', desc: 'PayPal & GCash with end-to-end encryption' },
                 { icon: '◈', title: 'Seller Ecosystem', desc: 'Join thousands of independent creators' },
               ].map((f) => (
                 <div key={f.title} className="flex items-start gap-4">

@@ -41,7 +41,7 @@ const Footer = () => (
           © {new Date().getFullYear()} CartLy. All rights reserved.
         </p>
         <div className="flex items-center gap-4">
-          {['Visa', 'Mastercard', 'Stripe', 'PayPal'].map((p) => (
+          {['PayPal', 'GCash', 'Cash on Delivery'].map((p) => (
             <span key={p} className="text-white/30 text-xs border border-white/10 rounded px-2 py-1">{p}</span>
           ))}
         </div>

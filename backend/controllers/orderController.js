@@ -1,9 +1,7 @@
-const stripe = process.env.STRIPE_SECRET_KEY
-  ? require('stripe')(process.env.STRIPE_SECRET_KEY)
-  : null;
 const { prisma } = require('../config/prisma');
 const orderService = require('../services/orderService');
 const productService = require('../services/productService');
+const paymentService = require('../services/paymentService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { sendEmail, emailTemplates } = require('../utils/email');
@@ -90,17 +88,12 @@ const createOrder = async (req, res, next) => {
     return created;
   });
 
-  // Stripe PaymentIntent — created after commit (a network call must not sit inside a DB transaction).
-  let clientSecret = null;
-  if (paymentMethod === 'stripe' && stripe) {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(totalPrice * 100),
-      currency: 'usd',
-      metadata: { orderId: order.id, userId: req.user._id },
-      automatic_payment_methods: { enabled: true },
-    });
-    clientSecret = paymentIntent.client_secret;
-    order.paymentResult = { id: paymentIntent.id };
+  // Initiate payment via the provider seam (after commit — network calls must not
+  // sit inside a DB transaction). COD returns pending; PayPal/GCash (2B/2C) will
+  // return an approve/redirect URL. The order already exists as `pending`.
+  const payment = await paymentService.createPayment({ order, method: paymentMethod });
+  if (payment.providerRef) {
+    order.paymentResult = { id: payment.providerRef, provider: payment.provider };
     await prisma.order.update({ where: { id: order.id }, data: { paymentResult: order.paymentResult } });
   }
 
@@ -112,7 +105,7 @@ const createOrder = async (req, res, next) => {
   }
 
   logger.info(`Order created: ${order.orderNumber} by ${req.user.email}`);
-  return ApiResponse.created(res, { order: orderService.serializeOrder(order), clientSecret }, 'Order created successfully');
+  return ApiResponse.created(res, { order: orderService.serializeOrder(order), payment }, 'Order created successfully');
 };
 
 // @desc    Get user's orders
@@ -224,50 +217,6 @@ const updateOrderStatus = async (req, res, next) => {
   return ApiResponse.success(res, orderService.serializeOrder(updated), `Order status updated to ${status}`);
 };
 
-// @desc    Stripe webhook handler
-// @route   POST /api/orders/webhook
-// @access  Public (Stripe)
-const stripeWebhook = async (req, res) => {
-  if (!stripe) return res.status(400).send('Stripe not configured');
-  const sig = req.headers['stripe-signature'];
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    logger.error(`Stripe webhook error: ${err.message}`);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'payment_intent.succeeded') {
-    const pi = event.data.object;
-    const order = await prisma.order.findFirst({ where: { paymentResult: { path: ['id'], equals: pi.id } } });
-    if (order) {
-      await prisma.$transaction(async (tx) => {
-        await tx.orderStatusEvent.create({ data: { orderId: order.id, status: 'confirmed', note: 'Payment received' } });
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            paymentStatus: 'paid',
-            paidAt: new Date(),
-            status: 'confirmed',
-            paymentResult: { ...(order.paymentResult || {}), id: pi.id, status: 'succeeded', receiptUrl: pi.charges?.data?.[0]?.receipt_url },
-          },
-        });
-      });
-    }
-  }
-
-  if (event.type === 'payment_intent.payment_failed') {
-    const pi = event.data.object;
-    const order = await prisma.order.findFirst({ where: { paymentResult: { path: ['id'], equals: pi.id } } });
-    if (order) {
-      await prisma.order.update({ where: { id: order.id }, data: { paymentStatus: 'failed' } });
-    }
-  }
-
-  return res.json({ received: true });
-};
-
 // @desc    Request return/refund
 // @route   POST /api/orders/:id/return
 // @access  Private
@@ -321,7 +270,6 @@ module.exports = {
   getMyOrders,
   getOrder,
   updateOrderStatus,
-  stripeWebhook,
   requestReturn,
   getSellerOrders,
 };

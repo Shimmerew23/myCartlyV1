@@ -102,8 +102,8 @@ reviewRouter.post('/:reviewId/helpful', authenticate, voteHelpful);
 // ============================================================
 const orderRouter = express.Router();
 
-// Stripe webhook (raw body needed — defined in server.js before json parser)
-orderRouter.post('/webhook', express.raw({ type: 'application/json' }), orderCtrl.stripeWebhook);
+// NOTE: provider webhooks (PayPal 2B, PayMongo 2C) will be added here with their
+// own raw-body handling. The Stripe webhook was removed in Plan 2A.
 
 orderRouter.post('/', authenticate, orderCtrl.createOrder);
 orderRouter.get('/my-orders', authenticate, orderCtrl.getMyOrders);

@@ -322,7 +322,7 @@ const CartPage = () => {
               {/* Safe checkout badges */}
               <div className="text-center text-xs text-outline space-y-1">
                 <p className="font-semibold">🔒 Secure Checkout</p>
-                <p>256-bit SSL encryption · Stripe payments</p>
+                <p>256-bit SSL encryption · PayPal &amp; GCash</p>
               </div>
             </div>
           </div>

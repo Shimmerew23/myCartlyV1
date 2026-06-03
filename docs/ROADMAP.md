@@ -67,19 +67,28 @@ no live-data ETL.
 
 ---
 
-## Phase 2 — Payment re-platform 🟥
+## Phase 2 — Payment re-platform 🟨 in progress
 
-**Status:** ⬜ Not started · **Depends on:** Phase 1
+**Status:** 🟨 In progress · **Depends on:** Phase 1
 
-Remove Stripe; add PayPal + GCash; add refunds.
+Remove Stripe; add **PayPal** (Standard Checkout, Orders v2) + **GCash via PayMongo**; add refunds.
+Methods offered after Phase 2: PayPal, GCash, COD (Stripe + bank transfer dropped).
+
+### Sub-plan progress
+- [x] **2A — Remove Stripe + payment-service scaffold:** stripped the Stripe SDK/webhook/raw-body route + `@stripe/*` client + `stripeAccountId` + CSP entries; `PaymentMethod` enum now `paypal|gcash|cod` (migration); added provider-agnostic `services/paymentService.js` seam (COD live; PayPal/GCash guarded). `createOrder` returns `{ order, payment }`. Frontend checkout → COD; Stripe copy/badges removed. 161 backend tests green; COD order verified end-to-end. *(Note: frontend `npm run lint` has no ESLint config — pre-existing; and `seller/Profile.tsx`/`EditProduct.tsx` have pre-existing type drift, unrelated to payments.)*
+- [ ] **2B — PayPal Standard Checkout:** create + capture order (Orders v2) + webhook; frontend Smart Buttons.
+- [ ] **2C — GCash via PayMongo:** create source/payment + webhook (redirect flow); frontend redirect handling.
+- [ ] **2D — Refunds:** full + partial via each provider; reflect in `paymentStatus` (`refunded`/`partially_refunded`); admin action + audit.
 
 ### Workstreams
 - [ ] Remove Stripe: server SDK, client (`@stripe/*`), and the raw-body webhook route
-- [ ] Integrate PayPal (checkout + webhooks)
-- [ ] Integrate GCash (checkout + webhooks)
+- [ ] Integrate PayPal Standard Checkout (create/capture + webhook)
+- [ ] Integrate GCash via PayMongo (checkout + webhook)
 - [ ] Refund flows (full + partial), reflected in order `paymentStatus`
-- [ ] Order + payment writes wrapped in DB transactions
-- [ ] Update `paymentMethod` enum and remove Stripe-specific fields (`stripeAccountId`, etc.)
+- [x] Order + payment writes wrapped in DB transactions *(carried over from Phase 1)*
+- [ ] Update `paymentMethod` enum (`paypal|gcash|cod`) and remove Stripe-specific fields (`stripeAccountId`, etc.)
+
+> Currency note: catalog defaults to USD but PayMongo/GCash settle in PHP — flagged for launch; full multi-currency is Phase 4.
 
 ### Definition of done
 - Checkout completes end-to-end on PayPal and GCash in test mode.

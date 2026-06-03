@@ -61,9 +61,9 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         imgSrc: ["'self'", 'data:', 'https:'],
-        scriptSrc: ["'self'"],
-        connectSrc: ["'self'", 'https://api.stripe.com'],
-        frameSrc: ["'self'", 'https://js.stripe.com'],
+        scriptSrc: ["'self'", 'https://www.paypal.com', 'https://www.sandbox.paypal.com'],
+        connectSrc: ["'self'", 'https://api-m.paypal.com', 'https://api-m.sandbox.paypal.com', 'https://api.paymongo.com'],
+        frameSrc: ["'self'", 'https://www.paypal.com', 'https://www.sandbox.paypal.com'],
       },
     },
     crossOriginEmbedderPolicy: false,
@@ -98,8 +98,8 @@ app.use(
 // PARSING & FORMATTING MIDDLEWARE
 // ============================================================
 
-// Stripe webhook needs raw body BEFORE json parser
-app.use('/api/orders/webhook', express.raw({ type: 'application/json' }));
+// Provider webhooks needing a raw body (PayPal 2B / PayMongo 2C) will register
+// their express.raw() routes here, BEFORE the json parser.
 
 // Body parsers
 app.use(express.json({ limit: '10mb' }));
