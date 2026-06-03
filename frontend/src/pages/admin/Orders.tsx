@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Search, ChevronDown, RefreshCw, Eye, Truck } from 'lucide-react';
+import { Search, ChevronDown, RefreshCw, Eye, Truck, RotateCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '@/api/axios';
 import { Order, Carrier } from '@/types';
@@ -8,7 +8,8 @@ import { Helmet } from 'react-helmet-async';
 import { useOrderStatusUpdate, fetchActiveCarriers } from '@/hooks/useOrderStatusUpdate';
 
 const STATUS_STYLES: Record<string, string> = { pending:'badge-warning',confirmed:'badge-info',processing:'badge-info',shipped:'badge-primary',out_for_delivery:'badge-primary',delivered:'badge-success',cancelled:'badge-error',return_requested:'badge-warning',returned:'badge-neutral',refunded:'badge-neutral' };
-const PAYMENT_STYLES: Record<string, string> = { paid:'badge-success',pending:'badge-warning',failed:'badge-error',refunded:'badge-neutral' };
+const PAYMENT_STYLES: Record<string, string> = { paid:'badge-success',pending:'badge-warning',failed:'badge-error',refunded:'badge-neutral',partially_refunded:'badge-warning' };
+const REFUNDABLE = ['paid', 'partially_refunded'];
 
 interface ShipDialog { orderId: string; preferredCarrier?: string }
 
@@ -21,6 +22,9 @@ const AdminOrders = () => {
   const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [shipForm, setShipForm] = useState({ carrierId: '', trackingNumber: '' });
   const [pendingStatus, setPendingStatus] = useState<{ orderId: string; status: string } | null>(null);
+  const [refundOrder, setRefundOrder] = useState<Order | null>(null);
+  const [refundForm, setRefundForm] = useState({ amount: '', reason: '' });
+  const [refunding, setRefunding] = useState(false);
 
   const fetchOrders = useCallback(async (page = 1) => {
     setLoading(true);
@@ -48,6 +52,35 @@ const AdminOrders = () => {
     }
   };
 
+  const openRefund = (order: Order) => {
+    setRefundForm({ amount: '', reason: '' });
+    setRefundOrder(order);
+  };
+
+  const confirmRefund = async () => {
+    if (!refundOrder) return;
+    const amount = refundForm.amount.trim();
+    const payload: { amount?: number; reason?: string } = {};
+    if (amount) {
+      const parsed = Number(amount);
+      if (!(parsed > 0)) { toast.error('Enter a valid amount, or leave blank for a full refund'); return; }
+      payload.amount = parsed;
+    }
+    if (refundForm.reason.trim()) payload.reason = refundForm.reason.trim();
+
+    setRefunding(true);
+    try {
+      const { data } = await api.post(`/orders/${refundOrder._id}/refund`, payload);
+      toast.success(`Refund ${data.data?.refund?.paymentStatus || 'processed'}`);
+      setRefundOrder(null);
+      fetchOrders(pagination.page);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Refund failed');
+    } finally {
+      setRefunding(false);
+    }
+  };
+
   const confirmShip = async () => {
     if (!pendingStatus || !shipForm.trackingNumber.trim()) {
       toast.error('Tracking number is required');
@@ -70,7 +103,7 @@ const AdminOrders = () => {
         </div>
         <div className="card p-4 flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-48"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" /><input value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} placeholder="Search order number..." className="w-full pl-9 pr-3 py-2 text-sm bg-surface-low border border-transparent rounded-md focus:outline-none focus:border-outline-variant" /></div>
-          {[{ key: 'status', options: [['','All Status'],['pending','Pending'],['confirmed','Confirmed'],['processing','Processing'],['shipped','Shipped'],['out_for_delivery','Out for Delivery'],['delivered','Delivered'],['cancelled','Cancelled']] }, { key: 'paymentStatus', options: [['','All Payment'],['paid','Paid'],['pending','Pending'],['failed','Failed']] }, { key: 'sort', options: [['-createdAt','Newest'],['-totalPrice','Highest'],['totalPrice','Lowest']] }].map(({ key, options }) => (
+          {[{ key: 'status', options: [['','All Status'],['pending','Pending'],['confirmed','Confirmed'],['processing','Processing'],['shipped','Shipped'],['out_for_delivery','Out for Delivery'],['delivered','Delivered'],['cancelled','Cancelled']] }, { key: 'paymentStatus', options: [['','All Payment'],['paid','Paid'],['pending','Pending'],['failed','Failed'],['partially_refunded','Partially Refunded'],['refunded','Refunded']] }, { key: 'sort', options: [['-createdAt','Newest'],['-totalPrice','Highest'],['totalPrice','Lowest']] }].map(({ key, options }) => (
             <div key={key} className="relative">
               <select value={(filters as any)[key]} onChange={(e) => setFilters((f) => ({ ...f, [key]: e.target.value }))} className="appearance-none pl-3 pr-8 py-2 text-sm bg-surface-low border border-transparent rounded-md focus:outline-none focus:border-outline-variant cursor-pointer">{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
               <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-outline pointer-events-none" />
@@ -106,7 +139,12 @@ const AdminOrders = () => {
                     </td>
                     <td><span className="text-xs text-outline">{new Date(order.createdAt).toLocaleDateString()}</span></td>
                     <td>
-                      <Link to={`/orders/${order._id}`} className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container transition-colors text-outline hover:text-on-surface"><Eye size={13} /></Link>
+                      <div className="flex items-center gap-1">
+                        <Link to={`/orders/${order._id}`} className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container transition-colors text-outline hover:text-on-surface"><Eye size={13} /></Link>
+                        {REFUNDABLE.includes(order.paymentStatus) && (
+                          <button onClick={() => openRefund(order)} title="Refund" className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container transition-colors text-outline hover:text-error"><RotateCcw size={13} /></button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -121,6 +159,43 @@ const AdminOrders = () => {
           )}
         </div>
       </div>
+
+      {/* Refund Order Dialog */}
+      {refundOrder && (() => {
+        const alreadyRefunded = refundOrder.paymentResult?.refundedAmount || 0;
+        const remaining = refundOrder.totalPrice - alreadyRefunded;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <RotateCcw size={18} className="text-error" />
+                <h2 className="font-headline font-black text-lg">Refund Order</h2>
+              </div>
+              <div className="text-xs bg-surface-low px-3 py-2 rounded-md space-y-0.5">
+                <p>Order <strong>{refundOrder.orderNumber}</strong> · {refundOrder.paymentMethod.toUpperCase()}</p>
+                <p>Total ${refundOrder.totalPrice.toFixed(2)}{alreadyRefunded > 0 && <> · Already refunded ${alreadyRefunded.toFixed(2)}</>}</p>
+                <p className="text-outline">Refundable balance: <strong>${remaining.toFixed(2)}</strong></p>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="label-sm block mb-1.5">Amount <span className="text-outline">(blank = full ${remaining.toFixed(2)})</span></label>
+                  <input type="number" min="0" max={remaining} step="0.01" value={refundForm.amount} onChange={(e) => setRefundForm((f) => ({ ...f, amount: e.target.value }))} className="input-box text-sm w-full" placeholder={`${remaining.toFixed(2)}`} />
+                </div>
+                <div>
+                  <label className="label-sm block mb-1.5">Reason</label>
+                  <input value={refundForm.reason} onChange={(e) => setRefundForm((f) => ({ ...f, reason: e.target.value }))} className="input-box text-sm w-full" placeholder="Optional note" />
+                </div>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setRefundOrder(null)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button onClick={confirmRefund} disabled={refunding} className="btn-primary flex-1 justify-center">
+                  {refunding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Issue Refund'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Ship Order Dialog */}
       {shipDialog && (

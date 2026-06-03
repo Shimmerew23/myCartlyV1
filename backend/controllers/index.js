@@ -1,7 +1,3 @@
-const User = require('../models/User');
-const Product = require('../models/Product');
-const Order = require('../models/Order');
-const { Cart, Review, Category, AuditLog, Coupon, Feedback } = require('../models/index');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { sendEmail, emailTemplates } = require('../utils/email');
@@ -10,10 +6,15 @@ const logger = require('../utils/logger');
 const slugify = require('slugify');
 const sharp = require('sharp');
 const { uploadBuffer, deleteImage } = require('../config/cloudinary');
+const { Prisma } = require('@prisma/client');
 const { prisma } = require('../config/prisma');
 const userService = require('../services/userService');
 const productService = require('../services/productService');
 const cartService = require('../services/cartService');
+const reviewService = require('../services/reviewService');
+const orderService = require('../services/orderService');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ============================================================
 // USER CONTROLLER
@@ -343,106 +344,108 @@ const applyCoupon = async (req, res, next) => {
 // REVIEW CONTROLLER
 // ============================================================
 
+const REVIEW_SORT_MAP = {
+  '-createdAt': { createdAt: 'desc' },
+  '-helpfulVotes': { helpfulVotes: 'desc' },
+  '-rating': { rating: 'desc' },
+  rating: { rating: 'asc' },
+};
+
+const pickReviewFields = (b) => {
+  const out = {};
+  if (b.rating !== undefined) out.rating = b.rating;
+  if (b.title !== undefined) out.title = b.title;
+  if (b.body !== undefined) out.body = b.body;
+  if (b.images !== undefined) out.images = b.images;
+  return out;
+};
+
 const getProductReviews = async (req, res, next) => {
-  try {
-    const { productId } = req.params;
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(50, parseInt(req.query.limit) || 10);
+  const { productId } = req.params;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(50, parseInt(req.query.limit, 10) || 10);
 
-    const filter = { product: productId, isApproved: true };
-    if (req.query.rating) filter.rating = parseInt(req.query.rating);
+  const where = { productId, isApproved: true };
+  if (req.query.rating) where.rating = parseInt(req.query.rating, 10);
 
-    const sortMap = {
-      '-createdAt': { createdAt: -1 },
-      '-helpfulVotes': { helpfulVotes: -1 },
-      '-rating': { rating: -1 },
-      rating: { rating: 1 },
-    };
-    const sort = sortMap[req.query.sort] || { createdAt: -1 };
+  const orderBy = REVIEW_SORT_MAP[req.query.sort] || { createdAt: 'desc' };
 
-    const [reviews, total] = await Promise.all([
-      Review.find(filter)
-        .sort(sort)
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .populate('user', 'name avatar')
-        .lean(),
-      Review.countDocuments(filter),
-    ]);
+  const [reviews, total] = await Promise.all([
+    prisma.review.findMany({
+      where,
+      orderBy,
+      skip: (page - 1) * limit,
+      take: limit,
+      include: { user: reviewService.REVIEW_USER_SELECT },
+    }),
+    prisma.review.count({ where }),
+  ]);
 
-    return ApiResponse.paginated(res, reviews, {
-      page, limit, total, pages: Math.ceil(total / limit),
-    });
-  } catch (err) { next(err); }
+  return ApiResponse.paginated(res, reviews.map(reviewService.serializeReview), {
+    page, limit, total, pages: Math.ceil(total / limit),
+  });
 };
 
 const createReview = async (req, res, next) => {
-  try {
-    const { productId } = req.params;
+  const { productId } = req.params;
+  if (!UUID_RE.test(productId)) return next(ApiError.notFound('Product not found'));
 
-    const product = await Product.findById(productId);
-    if (!product) return next(ApiError.notFound('Product not found'));
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) return next(ApiError.notFound('Product not found'));
 
-    const existingReview = await Review.findOne({
-      product: productId,
-      user: req.user._id,
-    });
-    if (existingReview) return next(ApiError.conflict('Already reviewed this product'));
+  const existing = await prisma.review.findUnique({ where: { productId_userId: { productId, userId: req.user._id } } });
+  if (existing) return next(ApiError.conflict('Already reviewed this product'));
 
-    // Check if verified purchase
-    const purchasedOrder = await Order.findOne({
-      user: req.user._id,
-      'items.product': productId,
-      status: 'delivered',
-    });
+  const purchasedOrder = await prisma.order.findFirst({
+    where: { userId: req.user._id, status: 'delivered', items: { some: { productId } } },
+  });
 
-    const review = await Review.create({
-      ...req.body,
-      product: productId,
-      user: req.user._id,
+  const review = await prisma.review.create({
+    data: {
+      ...pickReviewFields(req.body),
+      productId,
+      userId: req.user._id,
       isVerifiedPurchase: !!purchasedOrder,
-    });
+    },
+    include: { user: reviewService.REVIEW_USER_SELECT },
+  });
 
-    await review.populate('user', 'name avatar');
-    return ApiResponse.created(res, review, 'Review submitted');
-  } catch (err) { next(err); }
+  await reviewService.recomputeProductRating(productId);
+  return ApiResponse.created(res, reviewService.serializeReview(review), 'Review submitted');
 };
 
 const updateReview = async (req, res, next) => {
-  try {
-    const review = await Review.findById(req.params.reviewId);
-    if (!review) return next(ApiError.notFound('Review not found'));
-    if (review.user.toString() !== req.user._id.toString()) {
-      return next(ApiError.forbidden());
-    }
+  if (!UUID_RE.test(req.params.reviewId)) return next(ApiError.notFound('Review not found'));
+  const review = await prisma.review.findUnique({ where: { id: req.params.reviewId } });
+  if (!review) return next(ApiError.notFound('Review not found'));
+  if (review.userId !== req.user._id) return next(ApiError.forbidden());
 
-    Object.assign(review, req.body);
-    await review.save();
-    return ApiResponse.success(res, review, 'Review updated');
-  } catch (err) { next(err); }
+  const updated = await prisma.review.update({
+    where: { id: review.id },
+    data: pickReviewFields(req.body),
+    include: { user: reviewService.REVIEW_USER_SELECT },
+  });
+  await reviewService.recomputeProductRating(review.productId);
+  return ApiResponse.success(res, reviewService.serializeReview(updated), 'Review updated');
 };
 
 const deleteReview = async (req, res, next) => {
-  try {
-    const review = await Review.findById(req.params.reviewId);
-    if (!review) return next(ApiError.notFound('Review not found'));
+  if (!UUID_RE.test(req.params.reviewId)) return next(ApiError.notFound('Review not found'));
+  const review = await prisma.review.findUnique({ where: { id: req.params.reviewId } });
+  if (!review) return next(ApiError.notFound('Review not found'));
 
-    const isOwner = review.user.toString() === req.user._id.toString();
-    const isAdmin = ['admin', 'superadmin'].includes(req.user.role);
-    if (!isOwner && !isAdmin) return next(ApiError.forbidden());
+  const isOwner = review.userId === req.user._id;
+  const isAdmin = ['admin', 'superadmin'].includes(req.user.role);
+  if (!isOwner && !isAdmin) return next(ApiError.forbidden());
 
-    await review.deleteOne();
-    return ApiResponse.success(res, null, 'Review deleted');
-  } catch (err) { next(err); }
+  await prisma.review.delete({ where: { id: review.id } });
+  await reviewService.recomputeProductRating(review.productId);
+  return ApiResponse.success(res, null, 'Review deleted');
 };
 
 const voteHelpful = async (req, res, next) => {
-  try {
-    await Review.findByIdAndUpdate(req.params.reviewId, {
-      $inc: { helpfulVotes: 1 },
-    });
-    return ApiResponse.success(res, null, 'Vote recorded');
-  } catch (err) { next(err); }
+  await prisma.review.updateMany({ where: { id: req.params.reviewId }, data: { helpfulVotes: { increment: 1 } } });
+  return ApiResponse.success(res, null, 'Vote recorded');
 };
 
 // ============================================================
@@ -450,257 +453,257 @@ const voteHelpful = async (req, res, next) => {
 // ============================================================
 
 const getDashboardStats = async (req, res, next) => {
-  try {
-    const cacheKey = 'admin:dashboard';
-    const cached = await cache.get(cacheKey);
-    if (cached) return ApiResponse.success(res, cached);
+  const cacheKey = 'admin:dashboard';
+  const cached = await cache.get(cacheKey);
+  if (cached) return ApiResponse.success(res, cached);
 
-    const now = new Date();
-    const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const now = new Date();
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
-    const [
-      totalUsers, newUsersThisMonth,
-      totalSellers, pendingSellerApprovals,
-      totalProducts, activeProducts,
-      totalOrders, ordersThisMonth,
-      revenueStats, revenueLastMonth,
-      ordersByStatus,
-      recentOrders,
-      topSellingProducts,
-      categoryStats,
-    ] = await Promise.all([
-      User.countDocuments({ role: { $in: ['user', 'seller'] } }),
-      User.countDocuments({ createdAt: { $gte: thisMonth } }),
-      User.countDocuments({ role: 'seller' }),
-      User.countDocuments({ role: 'seller', 'sellerProfile.isApproved': false }),
-      Product.countDocuments(),
-      Product.countDocuments({ status: 'active' }),
-      Order.countDocuments(),
-      Order.countDocuments({ createdAt: { $gte: thisMonth } }),
-      Order.aggregate([
-        { $match: { paymentStatus: 'paid', createdAt: { $gte: thisMonth } } },
-        { $group: { _id: null, total: { $sum: '$totalPrice' }, count: { $sum: 1 } } },
-      ]),
-      Order.aggregate([
-        { $match: { paymentStatus: 'paid', createdAt: { $gte: lastMonth, $lt: thisMonth } } },
-        { $group: { _id: null, total: { $sum: '$totalPrice' } } },
-      ]),
-      Order.aggregate([
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-      ]),
-      Order.find().sort('-createdAt').limit(5)
-        .populate('user', 'name email').lean(),
-      Product.find({ status: 'active' }).sort('-sales').limit(5)
-        .select('name price sales revenue images').lean(),
-      Category.aggregate([
-        { $lookup: { from: 'products', localField: '_id', foreignField: 'category', as: 'products' } },
-        { $project: { name: 1, productCount: { $size: '$products' } } },
-        { $sort: { productCount: -1 } },
-        { $limit: 8 },
-      ]),
-    ]);
+  const [
+    totalUsers, newUsersThisMonth,
+    totalSellers, pendingSellerApprovals,
+    totalProducts, activeProducts,
+    totalOrders, ordersThisMonth,
+    revenueStats, revenueLastMonth,
+    ordersByStatusRaw,
+    recentOrders,
+    topSellingProducts,
+    categoryStatsRaw,
+  ] = await Promise.all([
+    prisma.user.count({ where: { role: { in: ['user', 'seller'] } } }),
+    prisma.user.count({ where: { createdAt: { gte: thisMonth } } }),
+    prisma.user.count({ where: { role: 'seller' } }),
+    prisma.user.count({ where: { role: 'seller', sellerProfile: { isApproved: false } } }),
+    prisma.product.count(),
+    prisma.product.count({ where: { status: 'active' } }),
+    prisma.order.count(),
+    prisma.order.count({ where: { createdAt: { gte: thisMonth } } }),
+    prisma.order.aggregate({ _sum: { totalPrice: true }, _count: true, where: { paymentStatus: 'paid', createdAt: { gte: thisMonth } } }),
+    prisma.order.aggregate({ _sum: { totalPrice: true }, where: { paymentStatus: 'paid', createdAt: { gte: lastMonth, lt: thisMonth } } }),
+    prisma.order.groupBy({ by: ['status'], _count: { status: true } }),
+    prisma.order.findMany({ orderBy: { createdAt: 'desc' }, take: 5, include: { ...orderService.ORDER_INCLUDE, user: true } }),
+    prisma.product.findMany({ where: { status: 'active' }, orderBy: { sales: 'desc' }, take: 5, include: productService.PRODUCT_INCLUDE }),
+    prisma.category.findMany({ take: 8, orderBy: { products: { _count: 'desc' } }, select: { name: true, _count: { select: { products: true } } } }),
+  ]);
 
-    const thisMonthRevenue = revenueStats[0]?.total || 0;
-    const lastMonthRevenue = revenueLastMonth[0]?.total || 0;
-    const revenueGrowth = lastMonthRevenue
-      ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100
-      : 0;
+  const thisMonthRevenue = revenueStats._sum.totalPrice || 0;
+  const lastMonthRevenue = revenueLastMonth._sum.totalPrice || 0;
+  const revenueGrowth = lastMonthRevenue
+    ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100
+    : 0;
 
-    const data = {
-      users: { total: totalUsers, newThisMonth: newUsersThisMonth },
-      sellers: { total: totalSellers, pendingApprovals: pendingSellerApprovals },
-      products: { total: totalProducts, active: activeProducts },
-      orders: {
-        total: totalOrders,
-        thisMonth: ordersThisMonth,
-        byStatus: ordersByStatus,
-      },
-      revenue: {
-        thisMonth: thisMonthRevenue,
-        lastMonth: lastMonthRevenue,
-        growth: Math.round(revenueGrowth * 10) / 10,
-      },
-      recentOrders,
-      topSellingProducts,
-      categoryStats,
-    };
+  const data = {
+    users: { total: totalUsers, newThisMonth: newUsersThisMonth },
+    sellers: { total: totalSellers, pendingApprovals: pendingSellerApprovals },
+    products: { total: totalProducts, active: activeProducts },
+    orders: {
+      total: totalOrders,
+      thisMonth: ordersThisMonth,
+      byStatus: ordersByStatusRaw.map((g) => ({ _id: g.status, count: g._count.status })),
+    },
+    revenue: {
+      thisMonth: thisMonthRevenue,
+      lastMonth: lastMonthRevenue,
+      growth: Math.round(revenueGrowth * 10) / 10,
+    },
+    recentOrders: recentOrders.map((o) => orderService.serializeOrder(o)),
+    topSellingProducts: topSellingProducts.map(productService.serializeProduct),
+    categoryStats: categoryStatsRaw.map((c) => ({ name: c.name, productCount: c._count.products })),
+  };
 
-    await cache.set(cacheKey, data, 120); // 2 min cache
-    return ApiResponse.success(res, data);
-  } catch (err) { next(err); }
+  await cache.set(cacheKey, data, 120); // 2 min cache
+  return ApiResponse.success(res, data);
+};
+
+const USER_SORT_MAP = {
+  '-createdAt': { createdAt: 'desc' },
+  createdAt: { createdAt: 'asc' },
+  name: { name: 'asc' },
+  '-name': { name: 'desc' },
+  role: { role: 'asc' },
 };
 
 const getAllUsers = async (req, res, next) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, parseInt(req.query.limit) || 20);
-    const skip = (page - 1) * limit;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, parseInt(req.query.limit, 10) || 20);
+  const skip = (page - 1) * limit;
 
-    const filter = {};
-    if (req.query.role) filter.role = req.query.role;
-    if (req.query.isActive !== undefined) filter.isActive = req.query.isActive === 'true';
-    if (req.query.isBanned !== undefined) filter.isBanned = req.query.isBanned === 'true';
-    if (req.query.search) {
-      filter.$or = [
-        { name: { $regex: req.query.search, $options: 'i' } },
-        { email: { $regex: req.query.search, $options: 'i' } },
-      ];
-    }
+  const where = {};
+  if (req.query.role) where.role = req.query.role;
+  if (req.query.isActive !== undefined) where.isActive = req.query.isActive === 'true';
+  if (req.query.isBanned !== undefined) where.isBanned = req.query.isBanned === 'true';
+  if (req.query.search) {
+    where.OR = [
+      { name: { contains: req.query.search, mode: 'insensitive' } },
+      { email: { contains: req.query.search, mode: 'insensitive' } },
+    ];
+  }
 
-    const sortMap = {
-      '-createdAt': { createdAt: -1 },
-      createdAt: { createdAt: 1 },
-      name: { name: 1 },
-      '-name': { name: -1 },
-      role: { role: 1 },
-    };
-    const sort = sortMap[req.query.sort] || { createdAt: -1 };
+  const orderBy = USER_SORT_MAP[req.query.sort] || { createdAt: 'desc' };
 
-    const [users, total] = await Promise.all([
-      User.find(filter).sort(sort).skip(skip).limit(limit).lean(),
-      User.countDocuments(filter),
-    ]);
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({ where, orderBy, skip, take: limit }),
+    prisma.user.count({ where }),
+  ]);
 
-    return ApiResponse.paginated(res, users, {
-      page, limit, total, pages: Math.ceil(total / limit),
-    });
-  } catch (err) { next(err); }
+  return ApiResponse.paginated(res, users.map((u) => userService.toSafeObject(u)), {
+    page, limit, total, pages: Math.ceil(total / limit),
+  });
 };
 
 const updateUser = async (req, res, next) => {
-  try {
-    const allowedFields = ['role', 'isActive', 'isBanned', 'banReason'];
-    if (req.user.role !== 'superadmin') {
-      allowedFields.splice(allowedFields.indexOf('role'), 1);
-    }
+  if (!UUID_RE.test(req.params.userId)) return next(ApiError.notFound('User not found'));
 
-    const updateData = {};
-    allowedFields.forEach((f) => { if (req.body[f] !== undefined) updateData[f] = req.body[f]; });
-    if (updateData.isBanned) updateData.bannedAt = Date.now();
+  const allowedFields = ['role', 'isActive', 'isBanned', 'banReason'];
+  if (req.user.role !== 'superadmin') {
+    allowedFields.splice(allowedFields.indexOf('role'), 1);
+  }
 
-    const user = await User.findByIdAndUpdate(req.params.userId, updateData, { new: true });
-    if (!user) return next(ApiError.notFound('User not found'));
+  const updateData = {};
+  allowedFields.forEach((f) => { if (req.body[f] !== undefined) updateData[f] = req.body[f]; });
+  if (updateData.isBanned) updateData.bannedAt = new Date();
 
-    logger.info(`Admin ${req.user.email} updated user ${user.email}`);
-    return ApiResponse.success(res, user.toSafeObject(), 'User updated');
-  } catch (err) { next(err); }
+  const existing = await prisma.user.findUnique({ where: { id: req.params.userId } });
+  if (!existing) return next(ApiError.notFound('User not found'));
+
+  const user = await prisma.user.update({ where: { id: req.params.userId }, data: updateData });
+  logger.info(`Admin ${req.user.email} updated user ${user.email}`);
+  return ApiResponse.success(res, userService.toSafeObject(user), 'User updated');
 };
 
 const deleteUser = async (req, res, next) => {
-  try {
-    const user = await User.findById(req.params.userId);
-    if (!user) return next(ApiError.notFound('User not found'));
-    if (user.role === 'superadmin') return next(ApiError.forbidden('Cannot delete superadmin'));
+  if (!UUID_RE.test(req.params.userId)) return next(ApiError.notFound('User not found'));
+  const user = await prisma.user.findUnique({ where: { id: req.params.userId } });
+  if (!user) return next(ApiError.notFound('User not found'));
+  if (user.role === 'superadmin') return next(ApiError.forbidden('Cannot delete superadmin'));
 
-    await User.findByIdAndUpdate(req.params.userId, { isActive: false, isBanned: true });
-    logger.info(`Admin ${req.user.email} deactivated user ${user.email}`);
-    return ApiResponse.success(res, null, 'User deactivated');
-  } catch (err) { next(err); }
+  await prisma.user.update({ where: { id: user.id }, data: { isActive: false, isBanned: true } });
+  logger.info(`Admin ${req.user.email} deactivated user ${user.email}`);
+  return ApiResponse.success(res, null, 'User deactivated');
 };
 
 const approveSeller = async (req, res, next) => {
+  if (!UUID_RE.test(req.params.userId)) return next(ApiError.notFound('Seller not found'));
+  const user = await prisma.user.findUnique({ where: { id: req.params.userId } });
+  if (!user || user.role !== 'seller') return next(ApiError.notFound('Seller not found'));
+
+  await prisma.sellerProfile.upsert({
+    where: { userId: user.id },
+    update: { isApproved: true, approvedAt: new Date() },
+    create: { userId: user.id, isApproved: true, approvedAt: new Date() },
+  });
+
   try {
-    const user = await User.findById(req.params.userId);
-    if (!user || user.role !== 'seller') return next(ApiError.notFound('Seller not found'));
+    const { subject, html } = emailTemplates.sellerApproval(user.name);
+    await sendEmail({ to: user.email, subject, html });
+  } catch (e) { logger.error(`Seller approval email failed: ${e.message}`); }
 
-    user.sellerProfile.isApproved = true;
-    user.sellerProfile.approvedAt = Date.now();
-    await user.save();
+  logger.info(`Seller approved: ${user.email} by ${req.user.email}`);
+  return ApiResponse.success(res, null, 'Seller approved successfully');
+};
 
-    try {
-      const { subject, html } = emailTemplates.sellerApproval(user.name);
-      await sendEmail({ to: user.email, subject, html });
-    } catch (e) { logger.error(`Seller approval email failed: ${e.message}`); }
-
-    logger.info(`Seller approved: ${user.email} by ${req.user.email}`);
-    return ApiResponse.success(res, null, 'Seller approved successfully');
-  } catch (err) { next(err); }
+const ORDER_SORT_MAP = {
+  '-createdAt': { createdAt: 'desc' },
+  createdAt: { createdAt: 'asc' },
+  '-totalPrice': { totalPrice: 'desc' },
+  totalPrice: { totalPrice: 'asc' },
 };
 
 const getAllOrders = async (req, res, next) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, parseInt(req.query.limit) || 20);
-    const skip = (page - 1) * limit;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, parseInt(req.query.limit, 10) || 20);
+  const skip = (page - 1) * limit;
 
-    const filter = {};
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
-    if (req.query.search) {
-      filter.$or = [
-        { orderNumber: { $regex: req.query.search, $options: 'i' } },
-      ];
-    }
+  const where = {};
+  if (req.query.status) where.status = req.query.status;
+  if (req.query.paymentStatus) where.paymentStatus = req.query.paymentStatus;
+  if (req.query.search) where.orderNumber = { contains: req.query.search, mode: 'insensitive' };
 
-    const [orders, total] = await Promise.all([
-      Order.find(filter)
-        .sort(req.query.sort || '-createdAt')
-        .skip(skip)
-        .limit(limit)
-        .populate('user', 'name email')
-        .lean(),
-      Order.countDocuments(filter),
-    ]);
+  const orderBy = ORDER_SORT_MAP[req.query.sort] || { createdAt: 'desc' };
 
-    return ApiResponse.paginated(res, orders, {
-      page, limit, total, pages: Math.ceil(total / limit),
-    });
-  } catch (err) { next(err); }
+  const [orders, total] = await Promise.all([
+    prisma.order.findMany({ where, orderBy, skip, take: limit, include: { ...orderService.ORDER_INCLUDE, user: true } }),
+    prisma.order.count({ where }),
+  ]);
+
+  return ApiResponse.paginated(res, orders.map((o) => orderService.serializeOrder(o)), {
+    page, limit, total, pages: Math.ceil(total / limit),
+  });
 };
 
 const getAllProducts = async (req, res, next) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, parseInt(req.query.limit) || 20);
-    const skip = (page - 1) * limit;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, parseInt(req.query.limit, 10) || 20);
+  const skip = (page - 1) * limit;
 
-    const filter = {};
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.seller) filter.seller = req.query.seller;
-    if (req.query.search) filter.$text = { $search: req.query.search };
+  const where = {};
+  if (req.query.status) where.status = req.query.status;
+  if (req.query.seller) where.sellerId = req.query.seller;
 
-    const [products, total] = await Promise.all([
-      Product.find(filter)
-        .sort(req.query.sort || '-createdAt')
-        .skip(skip)
-        .limit(limit)
-        .populate('category', 'name')
-        .populate('seller', 'name email sellerProfile.storeName')
-        .lean(),
-      Product.countDocuments(filter),
-    ]);
+  if (req.query.search) {
+    const filters = [];
+    if (req.query.status) filters.push(Prisma.sql`p."status"::text = ${req.query.status}`);
+    if (req.query.seller) filters.push(Prisma.sql`p."sellerId" = ${req.query.seller}::uuid`);
+    const { ids, total } = await productService.searchProductIds({ term: req.query.search, filters, skip, take: limit });
+    const rows = await prisma.product.findMany({ where: { id: { in: ids } }, include: productService.PRODUCT_INCLUDE });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const products = ids.map((id) => byId.get(id)).filter(Boolean).map(productService.serializeProduct);
+    return ApiResponse.paginated(res, products, { page, limit, total, pages: Math.ceil(total / limit) });
+  }
 
-    return ApiResponse.paginated(res, products, {
-      page, limit, total, pages: Math.ceil(total / limit),
-    });
-  } catch (err) { next(err); }
+  const [products, total] = await Promise.all([
+    prisma.product.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit, include: productService.PRODUCT_INCLUDE }),
+    prisma.product.count({ where }),
+  ]);
+
+  return ApiResponse.paginated(res, products.map(productService.serializeProduct), {
+    page, limit, total, pages: Math.ceil(total / limit),
+  });
 };
 
+const serializeAuditLog = (l) => ({
+  _id: l.id,
+  id: l.id,
+  user: l.user ? { _id: l.user.id, id: l.user.id, name: l.user.name, email: l.user.email, role: l.user.role } : (l.userId ?? undefined),
+  action: l.action,
+  resource: l.resource ?? undefined,
+  resourceId: l.resourceId ?? undefined,
+  method: l.method ?? undefined,
+  path: l.path ?? undefined,
+  statusCode: l.statusCode ?? undefined,
+  ip: l.ip ?? undefined,
+  userAgent: l.userAgent ?? undefined,
+  before: l.before ?? undefined,
+  after: l.after ?? undefined,
+  metadata: l.metadata ?? undefined,
+  createdAt: l.createdAt,
+});
+
 const getAuditLogs = async (req, res, next) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, parseInt(req.query.limit) || 20);
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, parseInt(req.query.limit, 10) || 20);
 
-    const filter = {};
-    if (req.query.user) filter.user = req.query.user;
-    if (req.query.action) filter.action = req.query.action;
-    if (req.query.resource) filter.resource = req.query.resource;
+  const where = {};
+  if (req.query.user) where.userId = req.query.user;
+  if (req.query.action) where.action = req.query.action;
+  if (req.query.resource) where.resource = req.query.resource;
 
-    const [logs, total] = await Promise.all([
-      AuditLog.find(filter)
-        .sort('-createdAt')
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .populate('user', 'name email role')
-        .lean(),
-      AuditLog.countDocuments(filter),
-    ]);
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: { user: { select: { id: true, name: true, email: true, role: true } } },
+    }),
+    prisma.auditLog.count({ where }),
+  ]);
 
-    return ApiResponse.paginated(res, logs, {
-      page, limit, total, pages: Math.ceil(total / limit),
-    });
-  } catch (err) { next(err); }
+  return ApiResponse.paginated(res, logs.map(serializeAuditLog), {
+    page, limit, total, pages: Math.ceil(total / limit),
+  });
 };
 
 // Coupon management
@@ -825,81 +828,114 @@ const deleteCategory = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+const ADMIN_PRODUCT_FIELDS = [
+  'name', 'description', 'shortDescription', 'price', 'compareAtPrice', 'costPrice',
+  'currency', 'subcategory', 'tags', 'brand', 'sku', 'stock', 'lowStockThreshold',
+  'trackInventory', 'hasVariants', 'status', 'isFeatured', 'isTrending', 'isNewArrival',
+  'seo', 'shipping', 'discount', 'categoryId',
+];
+
 const adminUpdateProduct = async (req, res, next) => {
-  try {
-    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!product) return next(ApiError.notFound('Product not found'));
-    await cache.flush('cache:products:*');
-    return ApiResponse.success(res, product, 'Product updated');
-  } catch (err) { next(err); }
+  if (!UUID_RE.test(req.params.id)) return next(ApiError.notFound('Product not found'));
+
+  const existing = await prisma.product.findUnique({ where: { id: req.params.id } });
+  if (!existing) return next(ApiError.notFound('Product not found'));
+
+  const body = productService.normalizeProductBody(req.body);
+  const data = {};
+  ADMIN_PRODUCT_FIELDS.forEach((f) => { if (body[f] !== undefined) data[f] = body[f]; });
+
+  const product = await prisma.product.update({ where: { id: req.params.id }, data, include: productService.PRODUCT_INCLUDE });
+  await cache.flush('cache:products:*');
+  return ApiResponse.success(res, productService.serializeProduct(product), 'Product updated');
 };
 
 // ============================================================
 // FEEDBACK CONTROLLER
 // ============================================================
 
+const FEEDBACK_USER_SELECT = { select: { id: true, name: true, email: true, role: true, avatar: true } };
+
+const serializeFeedback = (f) => ({
+  _id: f.id,
+  id: f.id,
+  user: f.user
+    ? { _id: f.user.id, id: f.user.id, name: f.user.name, email: f.user.email, role: f.user.role, avatar: f.user.avatar ?? undefined }
+    : (f.userId ?? undefined),
+  guestName: f.guestName ?? undefined,
+  guestEmail: f.guestEmail ?? undefined,
+  category: f.category,
+  subject: f.subject,
+  message: f.message,
+  rating: f.rating ?? undefined,
+  status: f.status,
+  adminNote: f.adminNote ?? undefined,
+  createdAt: f.createdAt,
+  updatedAt: f.updatedAt,
+});
+
 const submitFeedback = async (req, res, next) => {
-  try {
-    const { category, subject, message, rating, guestName, guestEmail } = req.body;
-    const isGuest = !req.user;
+  const { category, subject, message, rating, guestName, guestEmail } = req.body;
+  const isGuest = !req.user;
 
-    if (!category || !subject?.trim() || !message?.trim()) {
-      return next(ApiError.badRequest('Category, subject, and message are required.'));
-    }
-    if (isGuest && message.trim().length > 300) {
-      return next(ApiError.badRequest('Message must be 300 characters or fewer for guest submissions.'));
-    }
+  if (!category || !subject?.trim() || !message?.trim()) {
+    return next(ApiError.badRequest('Category, subject, and message are required.'));
+  }
+  if (isGuest && message.trim().length > 300) {
+    return next(ApiError.badRequest('Message must be 300 characters or fewer for guest submissions.'));
+  }
 
-    const feedback = await Feedback.create({
-      ...(req.user ? { user: req.user._id } : {}),
-      ...(isGuest && guestName ? { guestName } : {}),
-      ...(isGuest && guestEmail ? { guestEmail } : {}),
+  const feedback = await prisma.feedback.create({
+    data: {
+      userId: req.user ? req.user._id : undefined,
+      guestName: isGuest && guestName ? guestName : undefined,
+      guestEmail: isGuest && guestEmail ? guestEmail : undefined,
       category,
       subject,
       message,
-      ...(rating ? { rating } : {}),
-    });
-    return ApiResponse.created(res, feedback, 'Feedback submitted. Thank you!');
-  } catch (err) { next(err); }
+      rating: rating || undefined,
+    },
+  });
+  return ApiResponse.created(res, serializeFeedback(feedback), 'Feedback submitted. Thank you!');
 };
 
 const getFeedbacks = async (req, res, next) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, parseInt(req.query.limit) || 20);
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, parseInt(req.query.limit, 10) || 20);
 
-    const filter = {};
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.category) filter.category = req.query.category;
+  const where = {};
+  if (req.query.status) where.status = req.query.status;
+  if (req.query.category) where.category = req.query.category;
 
-    const [feedbacks, total] = await Promise.all([
-      Feedback.find(filter)
-        .sort('-createdAt')
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .populate('user', 'name email role avatar')
-        .lean(),
-      Feedback.countDocuments(filter),
-    ]);
+  const [feedbacks, total] = await Promise.all([
+    prisma.feedback.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: { user: FEEDBACK_USER_SELECT },
+    }),
+    prisma.feedback.count({ where }),
+  ]);
 
-    return ApiResponse.paginated(res, feedbacks, {
-      page, limit, total, pages: Math.ceil(total / limit),
-    });
-  } catch (err) { next(err); }
+  return ApiResponse.paginated(res, feedbacks.map(serializeFeedback), {
+    page, limit, total, pages: Math.ceil(total / limit),
+  });
 };
 
 const updateFeedbackStatus = async (req, res, next) => {
-  try {
-    const { status, adminNote } = req.body;
-    const feedback = await Feedback.findByIdAndUpdate(
-      req.params.id,
-      { ...(status ? { status } : {}), ...(adminNote !== undefined ? { adminNote } : {}) },
-      { new: true, runValidators: true }
-    ).populate('user', 'name email');
+  if (!UUID_RE.test(req.params.id)) return next(ApiError.notFound('Feedback not found'));
+  const { status, adminNote } = req.body;
 
-    if (!feedback) return next(ApiError.notFound('Feedback not found'));
-    return ApiResponse.success(res, feedback, 'Feedback updated');
-  } catch (err) { next(err); }
+  const existing = await prisma.feedback.findUnique({ where: { id: req.params.id } });
+  if (!existing) return next(ApiError.notFound('Feedback not found'));
+
+  const feedback = await prisma.feedback.update({
+    where: { id: req.params.id },
+    data: { ...(status ? { status } : {}), ...(adminNote !== undefined ? { adminNote } : {}) },
+    include: { user: FEEDBACK_USER_SELECT },
+  });
+  return ApiResponse.success(res, serializeFeedback(feedback), 'Feedback updated');
 };
 
 module.exports = {

@@ -1,7 +1,6 @@
 const jwt = require('jsonwebtoken');
 const onHeaders = require('on-headers');
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('express-mongo-sanitize');
 const multer = require('multer');
 const sharp = require('sharp');
 const path = require('path');
@@ -11,8 +10,7 @@ const morgan = require('morgan');
 const Joi = require('joi');
 const { body, query, param, validationResult } = require('express-validator');
 
-const User = require('../models/User');
-const { AuditLog } = require('../models/index');
+const { prisma } = require('../config/prisma');
 const userService = require('../services/userService');
 const ApiError = require('../utils/ApiError');
 const { verifyAccessToken } = require('../utils/jwt');
@@ -340,17 +338,19 @@ const auditLog = (action, resource) => {
       // Log after response (skipped in tests — no Mongo connection to block on)
       try {
         if (process.env.NODE_ENV !== 'test') {
-          await AuditLog.create({
-            user: req.user?._id,
-            action,
-            resource,
-            resourceId: req.params?.id,
-            method: req.method,
-            path: req.path,
-            statusCode: res.statusCode,
-            ip: req.ip,
-            userAgent: req.get('user-agent'),
-            metadata: { query: req.query, body: sanitizeForLog(req.body) },
+          await prisma.auditLog.create({
+            data: {
+              userId: req.user?._id,
+              action,
+              resource,
+              resourceId: req.params?.id,
+              method: req.method,
+              path: req.path,
+              statusCode: res.statusCode,
+              ip: req.ip,
+              userAgent: req.get('user-agent'),
+              metadata: { query: req.query, body: sanitizeForLog(req.body) },
+            },
           });
         }
       } catch (err) {
@@ -402,24 +402,21 @@ const errorHandler = (err, req, res, next) => {
     logger.warn(`${error.statusCode} - ${error.message} - ${req.originalUrl}`);
   }
 
-  // Mongoose CastError
-  if (err.name === 'CastError') {
-    error = ApiError.notFound(`Invalid ID: ${err.value}`);
-  }
-
-  // Mongoose Duplicate Key
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
+  // Prisma unique-constraint violation
+  if (err.code === 'P2002') {
+    const target = err.meta?.target;
+    const field = Array.isArray(target) ? target.join(', ') : (target || 'field');
     error = ApiError.conflict(`${field} already exists`);
   }
 
-  // Mongoose Validation Error
-  if (err.name === 'ValidationError') {
-    const errors = Object.values(err.errors).map((e) => ({
-      field: e.path,
-      message: e.message,
-    }));
-    error = new ApiError(422, 'Validation failed', errors);
+  // Prisma record-not-found (e.g. update/delete on a missing row)
+  if (err.code === 'P2025') {
+    error = ApiError.notFound(err.meta?.cause || 'Resource not found');
+  }
+
+  // Prisma malformed query / bad input
+  if (err.name === 'PrismaClientValidationError') {
+    error = new ApiError(400, 'Invalid request data');
   }
 
   // JWT Errors
@@ -567,6 +564,11 @@ const schemas = {
     orderId: Joi.string(),
   }),
 
+  refund: Joi.object({
+    amount: Joi.number().positive(),       // omit for a full refund of the remaining balance
+    reason: Joi.string().max(500).allow(''),
+  }),
+
   pagination: Joi.object({
     page: Joi.number().min(1).default(1),
     limit: Joi.number().min(1).max(100).default(20),
@@ -609,5 +611,4 @@ module.exports = {
   featureFlags,
   addRequestMetadata,
   schemas,
-  mongoSanitize,
 };

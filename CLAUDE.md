@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-CartLy — a full-stack MERN eCommerce platform. Two independent npm packages: `backend/` (Express/Mongoose API) and `frontend/` (React + TypeScript + Vite SPA). There is no root package.json or monorepo tooling — each directory is managed separately. There is **no test suite** configured.
+CartLy — a full-stack eCommerce platform: an **Express + PostgreSQL/Prisma** API (`backend/`) and a **React + TypeScript + Vite** SPA (`frontend/`). Two independent npm packages; there is no root package.json or monorepo tooling — each directory is managed separately. The backend has a **Jest + Supertest** integration suite (`backend/tests/`); the frontend has no test suite yet.
+
+> The data layer was migrated from MongoDB/Mongoose to PostgreSQL/Prisma in Phase 1 (see `docs/ROADMAP.md` and `docs/superpowers/plans/`). Mongoose is fully removed. Some older docs/README sections may still say "MERN/MongoDB" — the code is the source of truth.
 
 ## Commands
 
@@ -13,7 +15,9 @@ Run these from inside `backend/` or `frontend/` respectively.
 **Backend** (`cd backend`)
 - `npm run dev` — start API with nodemon on `PORT` (default 5000)
 - `npm start` — start API with plain node (production)
-- `npm run seed` — wipe & reseed MongoDB via `utils/seeder.js` (creates the test accounts below)
+- `npm test` — Jest + Supertest integration suite (`cross-env NODE_ENV=test jest --runInBand`); `tests/setup.js` runs `prisma migrate deploy` against the `.env.test` database first
+- `npm run seed` — wipe & reseed PostgreSQL via `utils/seeder.js` (creates the test accounts below)
+- `npm run prisma:migrate` — create/apply a dev migration · `npm run prisma:deploy` — apply pending migrations · `npm run prisma:generate` — regenerate the client · `npm run prisma:studio` — DB browser
 
 **Frontend** (`cd frontend`)
 - `npm run dev` — Vite dev server on `http://localhost:5173` (`--host` exposes it on the LAN)
@@ -22,12 +26,12 @@ Run these from inside `backend/` or `frontend/` respectively.
 - `npm run preview` — serve the built bundle
 
 **Full stack via Docker** (from repo root)
-- `docker-compose up --build` — brings up mongo, redis, backend, frontend, nginx (app served at `http://localhost`)
+- `docker-compose up --build` — brings up postgres, redis, backend, frontend, nginx (app served at `http://localhost`). Postgres is exposed on host port **5433** → container 5432.
 - `docker-compose exec backend node utils/seeder.js` — seed inside the container
 
 **Seeded test accounts** (password format `Role@123456`): `superadmin@CartLy.com`, `admin@CartLy.com`, `seller@CartLy.com`, `user@CartLy.com` — see README "Default Test Accounts" for the full list.
 
-Backend requires `backend/.env` (copy from `backend/.env.example`). It needs MongoDB, Redis, and Cloudinary credentials. Redis failures are non-fatal (graceful degradation); Mongo connection failure aborts startup.
+Backend requires `backend/.env` (copy from `backend/.env.example`). It needs `DATABASE_URL` (PostgreSQL), Redis, and Cloudinary credentials. Redis and Cloudinary failures are non-fatal (graceful degradation); a PostgreSQL connection failure aborts startup (it is the system of record). Tests use a separate database via `backend/.env.test` (`DATABASE_URL` → `cartly_test`).
 
 ## Architecture
 
@@ -38,7 +42,9 @@ The backend deliberately collapses each layer into a single `index.js` re-export
 - `middleware/index.js` (~600 lines) — *everything* cross-cutting: `authenticate`, `optionalAuth`, RBAC (`requireRole`, `requireSeller`, `requireAdmin`, `requireSuperAdmin`, `requireWarehouse`, `requireOwnership`), rate limiters, multer `upload` + `processImages` (Sharp→Cloudinary), `validate(schema)` with Joi `schemas`, `cacheMiddleware`, `auditLog`, error handling, perf timing.
 - `controllers/index.js` (~900 lines) — most controllers (users, cart, reviews, admin, categories, coupons, feedback). Only `authController`, `productController`, `orderController`, `carrierController`, `warehouseController` are separate files. `controllers/index.js` re-exports everything.
 - `routes/index.js` — *all* route definitions and their middleware chains, exported as named routers (`authRouter`, `productRouter`, …) that `server.js` mounts.
-- `models/index.js` — re-exports all Mongoose models; some models (e.g. `AuditLog`) are defined inline here rather than in their own file.
+- `prisma/schema.prisma` — the single source of truth for the data model (all entities, relations, native enums, indexes). Migrations live in `prisma/migrations/`. The client is created in `config/prisma.js` (`prisma`, `connectPrisma`).
+- `services/*.js` — the Prisma data layer that keeps the API contract frozen. Each service owns its queries **and** the serializers that rebuild the exact legacy JSON shapes (`_id`/`id` aliases, nested `rating`, populated `category`/`seller`, virtuals like `discountedPrice`/`inStock`). See `userService`, `productService`, `cartService`, `orderService`, `reviewService`. **When porting/adding an endpoint, go through these services — never return raw Prisma rows.**
+- `jobs/auditCleanup.js` — daily deletion of `AuditLog` rows older than 90 days (started from `server.js`; replaces the old Mongo TTL index).
 
 **Route middleware chain pattern** — routes compose middleware in order; mirror this when adding endpoints:
 ```
@@ -52,11 +58,17 @@ router.post('/', authenticate, requireSeller, uploadLimiter,
 
 **Response contract** — controllers return through `utils/ApiResponse.js`: `ApiResponse.success(res, data, msg)`, `.created(...)`, `.paginated(res, data, pagination)`. The JSON shape is always `{ statusCode, success, message, data, timestamp }`. Errors throw `ApiError` (`utils/ApiError.js`); `express-async-errors` lets controllers throw inside async handlers without try/catch, and `errorHandler` in middleware formats them. **Keep this envelope** — the frontend depends on it (see below).
 
-**Images** — uploaded to Cloudinary (not local disk), with UUID-based `public_id`s stored alongside the URL in Mongo so old assets can be deleted on replace. `processImages` does Sharp resize/WebP before upload. The Docker `uploads/` volume is legacy.
+**Images** — uploaded to Cloudinary (not local disk), with UUID-based `public_id`s stored alongside the URL (in the `ProductImage` table) so old assets can be deleted on replace. `processImages` does Sharp resize/WebP before upload. The Docker `uploads/` volume is legacy.
 
-**Stripe webhook** — `/api/orders/webhook` needs the raw body, so `express.raw()` is registered for that path in `server.js` *before* the JSON body parser. Don't move the body-parser ordering.
+**Payments** — provider-agnostic seam in `services/paymentService.js` (dispatches by method/provider). Stripe is fully removed. Methods: **COD**, **PayPal** (Standard Checkout / Orders v2, `config/paypal.js`), **GCash via PayMongo** (Sources flow, `config/paymongo.js`). PayPal + GCash share a redirect/approve-URL flow: `createOrder` returns `{ order, payment }` and the frontend redirects to `payment.approveUrl`; confirmation comes back via capture (PayPal: `POST /orders/:id/capture` on return) or webhook. `markOrderPaid` is the single transactional, idempotent paid/confirmed transition. GCash settles in **PHP** (catalog is USD; full multi-currency is Phase 4 — see ADR 0004).
 
-**Auth model** — JWT access (15m) + refresh (7d) tokens; refresh tokens and a logout blacklist live in Redis. Five roles: `user` / `seller` / `admin` / `superadmin` / `warehouse`. Google OAuth via Passport; the callback sets cookies and redirects to `/oauth/callback?token=...` on the frontend (it does **not** return JSON). Note: `passport-facebook` is still in `package.json` but Facebook OAuth has been removed.
+**Refunds** — admin-only, full or partial, via `paymentService.refundPayment({ order, amount, reason })` → `POST /api/orders/:id/refund` (`requireAdmin` + `auditLog('REFUND_ORDER')`). It calls the original provider (`paypal.refundCapture` / `paymongo.refundPayment`; COD is a manual no-provider refund), then transactionally sets `paymentStatus` to `refunded` or `partially_refunded` and records `refundedAmount` + a `refunds[]` array inside the existing `paymentResult` JSON (no schema change — the `PaymentStatus` enum already had both values). A full refund also sets order `status` to `refunded`. Omitting `amount` refunds the remaining balance; the seam rejects refunds on unpaid orders or amounts above the remaining balance.
+
+**Provider webhooks** — `/api/orders/webhook/paypal` and `/api/orders/webhook/paymongo` need the raw body for signature verification, so `express.raw()` is registered for **each** path in `server.js` *before* the JSON body parser. Don't move the body-parser ordering. Each provider client owns its `verifyWebhookSignature` + `isConfigured` (env-gated; mocked in tests).
+
+**Auth model** — JWT access (15m) + refresh (7d) tokens; refresh tokens and a logout blacklist live in Redis. Five roles: `user` / `seller` / `admin` / `superadmin` / `warehouse`. Password hashing, token generation, lockout, and the user serializers live in `services/userService.js` (`config/passport.js` uses Prisma). Google OAuth via Passport; the callback sets cookies and redirects to `/oauth/callback?token=...` on the frontend (it does **not** return JSON). Emails are stored lowercase — the API lowercases on register and on login lookup.
+
+**Order placement** is wrapped in a `prisma.$transaction` (validate stock → create order + items + initial status event → decrement stock → clear cart), so checkout is atomic. Status changes, returns, and the payment webhook are transactional too.
 
 ### Frontend — SPA, three concerns kept separate
 
@@ -73,4 +85,4 @@ router.post('/', authenticate, requireSeller, uploadLimiter,
 - API base path is `/api/*`; frontend reads it from `VITE_API_URL`. In Docker, nginx (`nginx.conf`) reverse-proxies `/api/` → backend and `/` → frontend SPA, and applies its own rate-limit zones.
 - The design system is editorial/luxury: Manrope + Plus Jakarta Sans fonts, navy `#1A237E` primary, sharp 2–8px radii (intentionally not rounded), 8px spacing grid, Framer Motion transitions. Defined in `frontend/src/index.css` + `tailwind.config.js`. Match it for new UI.
 
-When adding a feature that spans the stack, the typical touch set is: model in `models/`, controller (likely in `controllers/index.js`), route + middleware chain in `routes/index.js`, then frontend type in `types/index.ts`, a page under the right layout group, and data access via the axios helpers.
+When adding a feature that spans the stack, the typical touch set is: model in `prisma/schema.prisma` (+ a migration), queries/serializers in the relevant `services/*.js`, controller (likely in `controllers/index.js`), route + middleware chain in `routes/index.js`, then frontend type in `types/index.ts`, a page under the right layout group, and data access via the axios helpers. Add a `tests/*.test.js` Supertest case asserting the response envelope/shape.

@@ -3,6 +3,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const {
   authRouter, userRouter, productRouter, categoryRouter, cartRouter, orderRouter, adminRouter,
+  reviewRouter, carrierRouter, feedbackRouter, warehouseRouter,
 } = require('../../routes/index');
 const { errorHandler, notFound, addRequestMetadata } = require('../../middleware/index');
 
@@ -20,6 +21,10 @@ function buildApp() {
   app.use('/api/cart', cartRouter);
   app.use('/api/orders', orderRouter);
   app.use('/api/admin', adminRouter);
+  app.use('/api/products/:productId/reviews', reviewRouter);
+  app.use('/api/carriers', carrierRouter);
+  app.use('/api/feedback', feedbackRouter);
+  app.use('/api/warehouse', warehouseRouter);
   app.use(notFound);
   app.use(errorHandler);
   return app;

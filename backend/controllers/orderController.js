@@ -1,11 +1,7 @@
-const stripe = process.env.STRIPE_SECRET_KEY
-  ? require('stripe')(process.env.STRIPE_SECRET_KEY)
-  : null;
 const { prisma } = require('../config/prisma');
 const orderService = require('../services/orderService');
 const productService = require('../services/productService');
-// Carrier stays on Mongoose until Plan 1E fills in the Prisma Carrier model.
-const Carrier = require('../models/Carrier');
+const paymentService = require('../services/paymentService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { sendEmail, emailTemplates } = require('../utils/email');
@@ -92,17 +88,12 @@ const createOrder = async (req, res, next) => {
     return created;
   });
 
-  // Stripe PaymentIntent — created after commit (a network call must not sit inside a DB transaction).
-  let clientSecret = null;
-  if (paymentMethod === 'stripe' && stripe) {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(totalPrice * 100),
-      currency: 'usd',
-      metadata: { orderId: order.id, userId: req.user._id },
-      automatic_payment_methods: { enabled: true },
-    });
-    clientSecret = paymentIntent.client_secret;
-    order.paymentResult = { id: paymentIntent.id };
+  // Initiate payment via the provider seam (after commit — network calls must not
+  // sit inside a DB transaction). COD returns pending; PayPal/GCash (2B/2C) will
+  // return an approve/redirect URL. The order already exists as `pending`.
+  const payment = await paymentService.createPayment({ order, method: paymentMethod });
+  if (payment.providerRef) {
+    order.paymentResult = { id: payment.providerRef, provider: payment.provider };
     await prisma.order.update({ where: { id: order.id }, data: { paymentResult: order.paymentResult } });
   }
 
@@ -114,7 +105,7 @@ const createOrder = async (req, res, next) => {
   }
 
   logger.info(`Order created: ${order.orderNumber} by ${req.user.email}`);
-  return ApiResponse.created(res, { order: orderService.serializeOrder(order), clientSecret }, 'Order created successfully');
+  return ApiResponse.created(res, { order: orderService.serializeOrder(order), payment }, 'Order created successfully');
 };
 
 // @desc    Get user's orders
@@ -190,7 +181,7 @@ const updateOrderStatus = async (req, res, next) => {
     let resolvedCarrierName = null;
     let resolvedTrackingUrl = trackingUrl || null;
     if (carrierId) {
-      const carrier = await Carrier.findById(carrierId);
+      const carrier = await prisma.carrier.findUnique({ where: { id: carrierId } }).catch(() => null);
       if (carrier) {
         resolvedCarrierName = carrier.name;
         if (carrier.trackingUrlTemplate) {
@@ -224,50 +215,6 @@ const updateOrderStatus = async (req, res, next) => {
   });
 
   return ApiResponse.success(res, orderService.serializeOrder(updated), `Order status updated to ${status}`);
-};
-
-// @desc    Stripe webhook handler
-// @route   POST /api/orders/webhook
-// @access  Public (Stripe)
-const stripeWebhook = async (req, res) => {
-  if (!stripe) return res.status(400).send('Stripe not configured');
-  const sig = req.headers['stripe-signature'];
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    logger.error(`Stripe webhook error: ${err.message}`);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'payment_intent.succeeded') {
-    const pi = event.data.object;
-    const order = await prisma.order.findFirst({ where: { paymentResult: { path: ['id'], equals: pi.id } } });
-    if (order) {
-      await prisma.$transaction(async (tx) => {
-        await tx.orderStatusEvent.create({ data: { orderId: order.id, status: 'confirmed', note: 'Payment received' } });
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            paymentStatus: 'paid',
-            paidAt: new Date(),
-            status: 'confirmed',
-            paymentResult: { ...(order.paymentResult || {}), id: pi.id, status: 'succeeded', receiptUrl: pi.charges?.data?.[0]?.receipt_url },
-          },
-        });
-      });
-    }
-  }
-
-  if (event.type === 'payment_intent.payment_failed') {
-    const pi = event.data.object;
-    const order = await prisma.order.findFirst({ where: { paymentResult: { path: ['id'], equals: pi.id } } });
-    if (order) {
-      await prisma.order.update({ where: { id: order.id }, data: { paymentStatus: 'failed' } });
-    }
-  }
-
-  return res.json({ received: true });
 };
 
 // @desc    Request return/refund
@@ -318,12 +265,78 @@ const getSellerOrders = async (req, res, next) => {
   });
 };
 
+// @desc    Capture an approved payment (PayPal return flow)
+// @route   POST /api/orders/:id/capture
+// @access  Private (owner)
+const capturePayment = async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next(ApiError.notFound('Order not found'));
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
+  if (!order) return next(ApiError.notFound('Order not found'));
+  if (order.userId !== req.user._id) return next(ApiError.forbidden());
+
+  const result = await paymentService.capturePayment({ order });
+  const updated = await prisma.order.findUnique({ where: { id: order.id }, include: orderService.ORDER_INCLUDE });
+  return ApiResponse.success(res, { order: orderService.serializeOrder(updated), payment: result }, 'Payment captured');
+};
+
+// @desc    Refund an order (full or partial) — admin
+// @route   POST /api/orders/:id/refund
+// @access  Admin
+const refundOrder = async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next(ApiError.notFound('Order not found'));
+  const { amount, reason } = req.body;
+
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
+  if (!order) return next(ApiError.notFound('Order not found'));
+
+  const refund = await paymentService.refundPayment({ order, amount, reason, adminId: req.user._id });
+  const updated = await prisma.order.findUnique({ where: { id: order.id }, include: orderService.ORDER_INCLUDE });
+
+  logger.info(`Order ${order.orderNumber} refunded (${refund.paymentStatus}) by ${req.user.email}`);
+  return ApiResponse.success(res, { order: orderService.serializeOrder(updated), refund }, `Refund ${refund.paymentStatus}`);
+};
+
+// @desc    PayPal webhook
+// @route   POST /api/orders/webhook/paypal
+// @access  Public (PayPal) — raw body
+const paypalWebhook = async (req, res) => {
+  const rawBody = Buffer.isBuffer(req.body)
+    ? req.body.toString('utf8')
+    : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
+  try {
+    await paymentService.handleWebhook('paypal', { headers: req.headers, rawBody });
+    return res.json({ received: true });
+  } catch (err) {
+    logger.error(`PayPal webhook error: ${err.message}`);
+    return res.status(400).json({ received: false });
+  }
+};
+
+// @desc    PayMongo webhook (GCash)
+// @route   POST /api/orders/webhook/paymongo
+// @access  Public (PayMongo) — raw body
+const paymongoWebhook = async (req, res) => {
+  const rawBody = Buffer.isBuffer(req.body)
+    ? req.body.toString('utf8')
+    : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
+  try {
+    await paymentService.handleWebhook('paymongo', { headers: req.headers, rawBody });
+    return res.json({ received: true });
+  } catch (err) {
+    logger.error(`PayMongo webhook error: ${err.message}`);
+    return res.status(400).json({ received: false });
+  }
+};
+
 module.exports = {
   createOrder,
   getMyOrders,
   getOrder,
   updateOrderStatus,
-  stripeWebhook,
   requestReturn,
   getSellerOrders,
+  capturePayment,
+  refundOrder,
+  paypalWebhook,
+  paymongoWebhook,
 };

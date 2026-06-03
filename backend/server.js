@@ -11,16 +11,15 @@ const hpp = require('hpp');
 const path = require('path');
 const fs = require('fs');
 
-const connectDB = require('./config/db');
 const { connectPrisma } = require('./config/prisma');
 const { connectRedis } = require('./config/redis');
 const { connectCloudinary } = require('./config/cloudinary');
+const { startAuditCleanup } = require('./jobs/auditCleanup');
 const passport = require('./config/passport');
 const logger = require('./utils/logger');
 
 const {
   globalLimiter,
-  mongoSanitize,
   httpLogger,
   notFound,
   errorHandler,
@@ -62,9 +61,9 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         imgSrc: ["'self'", 'data:', 'https:'],
-        scriptSrc: ["'self'"],
-        connectSrc: ["'self'", 'https://api.stripe.com'],
-        frameSrc: ["'self'", 'https://js.stripe.com'],
+        scriptSrc: ["'self'", 'https://www.paypal.com', 'https://www.sandbox.paypal.com'],
+        connectSrc: ["'self'", 'https://api-m.paypal.com', 'https://api-m.sandbox.paypal.com', 'https://api.paymongo.com'],
+        frameSrc: ["'self'", 'https://www.paypal.com', 'https://www.sandbox.paypal.com'],
       },
     },
     crossOriginEmbedderPolicy: false,
@@ -99,8 +98,10 @@ app.use(
 // PARSING & FORMATTING MIDDLEWARE
 // ============================================================
 
-// Stripe webhook needs raw body BEFORE json parser
-app.use('/api/orders/webhook', express.raw({ type: 'application/json' }));
+// Provider webhooks need the raw body for signature verification — register
+// raw parsing for those paths BEFORE the JSON parser.
+app.use('/api/orders/webhook/paypal', express.raw({ type: '*/*' }));
+app.use('/api/orders/webhook/paymongo', express.raw({ type: '*/*' }));
 
 // Body parsers
 app.use(express.json({ limit: '10mb' }));
@@ -114,9 +115,6 @@ app.use(compression({ level: 6, threshold: 1024 }));
 
 // HPP — HTTP Parameter Pollution protection
 app.use(hpp({ whitelist: ['price', 'rating', 'tags'] }));
-
-// MongoDB injection sanitization
-app.use(mongoSanitize({ replaceWith: '_' }));
 
 // ============================================================
 // SESSION & PASSPORT (for OAuth)
@@ -197,10 +195,7 @@ app.use(errorHandler);
 // ============================================================
 const startServer = async () => {
   try {
-    // Connect to MongoDB
-    await connectDB();
-
-    // Connect to PostgreSQL via Prisma (runs alongside Mongo during the migration)
+    // Connect to PostgreSQL via Prisma (system of record)
     await connectPrisma();
 
     // Connect to Redis (optional — fails gracefully)
@@ -214,10 +209,13 @@ const startServer = async () => {
       logger.warn(`⚠️  Cloudinary: ${err.message || err.error?.message || JSON.stringify(err)}`);
     }
 
+    // Schedule the audit-log cleanup (replaces the Mongoose TTL index)
+    startAuditCleanup();
+
     const PORT = parseInt(process.env.PORT);
     const server = app.listen(PORT, () => {
       logger.info(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-      logger.info(`📦 MongoDB: Connected`);
+      logger.info(`🐘 PostgreSQL: Connected`);
       logger.info(`🌐 API: http://<Domain>:${PORT}/api`);
     });
 

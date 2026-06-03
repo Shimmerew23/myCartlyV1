@@ -102,8 +102,10 @@ reviewRouter.post('/:reviewId/helpful', authenticate, voteHelpful);
 // ============================================================
 const orderRouter = express.Router();
 
-// Stripe webhook (raw body needed — defined in server.js before json parser)
-orderRouter.post('/webhook', express.raw({ type: 'application/json' }), orderCtrl.stripeWebhook);
+// Provider webhooks — raw body is applied app-level in server.js for these paths
+// (before the JSON parser) so the signatures can be verified.
+orderRouter.post('/webhook/paypal', orderCtrl.paypalWebhook);
+orderRouter.post('/webhook/paymongo', orderCtrl.paymongoWebhook);
 
 orderRouter.post('/', authenticate, orderCtrl.createOrder);
 orderRouter.get('/my-orders', authenticate, orderCtrl.getMyOrders);
@@ -111,6 +113,9 @@ orderRouter.get('/seller-orders', authenticate, requireSeller, orderCtrl.getSell
 orderRouter.get('/:id', authenticate, orderCtrl.getOrder);
 orderRouter.put('/:id/status', authenticate, requireSeller, orderCtrl.updateOrderStatus);
 orderRouter.post('/:id/return', authenticate, orderCtrl.requestReturn);
+orderRouter.post('/:id/capture', authenticate, orderCtrl.capturePayment);
+orderRouter.post('/:id/refund', authenticate, requireAdmin, validate(schemas.refund),
+  auditLog('REFUND_ORDER', 'Order'), orderCtrl.refundOrder);
 
 // ============================================================
 // USER ROUTES

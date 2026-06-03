@@ -38,7 +38,7 @@ const CheckoutPage = () => {
   const { user } = useAppSelector((s) => s.auth);
   const [step, setStep] = useState<Step>('shipping');
   const [shippingAddress, setShippingAddress] = useState<AddressForm | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cod'>('stripe');
+  const [paymentMethod, setPaymentMethod] = useState<'cod' | 'paypal' | 'gcash'>('cod');
   const [placing, setPlacing] = useState(false);
   const [orderSummaryOpen, setOrderSummaryOpen] = useState(false);
   const [carriers, setCarriers] = useState<Carrier[]>([]);
@@ -105,6 +105,7 @@ const CheckoutPage = () => {
     setPlacing(true);
     try {
       const createdOrders: any[] = [];
+      let approveUrl: string | null = null;
 
       // Create one order per store group
       for (const group of storeGroups) {
@@ -115,10 +116,19 @@ const CheckoutPage = () => {
           selectedItemIds: group.itemIds,
         });
         createdOrders.push(data.data.order);
+        // Online providers (PayPal) return an approval URL to redirect to.
+        if (!approveUrl && data.data.payment?.approveUrl) approveUrl = data.data.payment.approveUrl;
       }
 
       dispatch(clearCart());
       dispatch(deselectAllItems());
+
+      // Redirect to the provider's approval page; the order(s) are created as pending
+      // and captured on return. (Multi-seller online payment redirects to the first.)
+      if (approveUrl) {
+        window.location.href = approveUrl;
+        return;
+      }
 
       if (createdOrders.length === 1) {
         toast.success('Order placed successfully!');
@@ -227,7 +237,12 @@ const CheckoutPage = () => {
                 <h2 className="font-headline font-black text-lg flex items-center gap-2"><CreditCard size={18} /> Payment Method</h2>
                 <div className="space-y-3">
                   {[
-                    { key: 'stripe', label: 'Credit / Debit Card', sub: 'Visa, Mastercard, Amex via Stripe', emoji: '💳' },
+                    ...(import.meta.env.VITE_PAYPAL_ENABLED === 'true'
+                      ? [{ key: 'paypal', label: 'PayPal', sub: 'Pay with your PayPal account', emoji: '🅿️' }]
+                      : []),
+                    ...(import.meta.env.VITE_GCASH_ENABLED === 'true'
+                      ? [{ key: 'gcash', label: 'GCash', sub: 'Pay with your GCash wallet', emoji: '🇵🇭' }]
+                      : []),
                     { key: 'cod', label: 'Cash on Delivery', sub: 'Pay when your order arrives', emoji: '📦' },
                   ].map((m) => (
                     <label key={m.key} className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${paymentMethod === m.key ? 'border-primary-900 bg-primary-50/40' : 'border-outline-variant/30 hover:border-outline-variant'}`}>
@@ -237,11 +252,17 @@ const CheckoutPage = () => {
                     </label>
                   ))}
                 </div>
-                {paymentMethod === 'stripe' && (
-                  <div className="bg-primary-50/50 border border-primary-100 rounded-md p-3 text-xs text-primary-700">
-                    <Shield size={12} className="inline mr-1" />Your card details are encrypted and processed securely by Stripe. We never store your card information.
-                  </div>
-                )}
+                <div className="bg-primary-50/50 border border-primary-100 rounded-md p-3 text-xs text-primary-700">
+                  <Shield size={12} className="inline mr-1" />
+                  {(() => {
+                    const online = [
+                      import.meta.env.VITE_PAYPAL_ENABLED === 'true' && 'PayPal',
+                      import.meta.env.VITE_GCASH_ENABLED === 'true' && 'GCash',
+                    ].filter(Boolean) as string[];
+                    if (online.length === 0) return 'Online payment via PayPal & GCash is coming soon — choose Cash on Delivery for now.';
+                    return `${online.join(' & ')} and Cash on Delivery are available now.`;
+                  })()}
+                </div>
                 <div className="flex gap-3">
                   <button onClick={() => setStep('carrier')} className="btn-secondary flex-1 justify-center">← Back</button>
                   <button onClick={() => setStep('review')} className="btn-primary flex-1 justify-center">Review Order →</button>
@@ -269,7 +290,7 @@ const CheckoutPage = () => {
                   </div>
                   <div className="p-4">
                     <p className="label-sm mb-1 flex items-center gap-2"><CreditCard size={12} /> Payment</p>
-                    <p className="text-sm text-on-surface">{paymentMethod === 'stripe' ? '💳 Credit/Debit Card via Stripe' : '📦 Cash on Delivery'}</p>
+                    <p className="text-sm text-on-surface">{paymentMethod === 'cod' ? '📦 Cash on Delivery' : paymentMethod === 'paypal' ? '🅿️ PayPal' : '🇵🇭 GCash'}</p>
                     <button onClick={() => setStep('payment')} className="text-xs text-primary-700 font-semibold mt-1 hover:text-primary-900">Edit →</button>
                   </div>
                 </div>
@@ -370,7 +391,7 @@ const CheckoutPage = () => {
                 </div>
               </div>
               <div className="px-5 py-3 border-t border-outline-variant/10 flex items-center justify-center gap-2 text-xs text-outline">
-                <Shield size={12} /><span>Powered by Stripe</span>
+                <Shield size={12} /><span>Secure checkout</span>
               </div>
             </div>
           </div>
