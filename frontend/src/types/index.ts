@@ -31,6 +31,15 @@ export interface SellerProfile {
   storeLogo?: string;
   storeBanner?: string;
   storeSlug: string;
+  storeEmail?: string;
+  storePhone?: string;
+  returnPolicy?: string;
+  shippingPolicy?: string;
+  socialLinks?: {
+    website?: string;
+    instagram?: string;
+    twitter?: string;
+  };
   totalSales: number;
   totalRevenue: number;
   rating: number;

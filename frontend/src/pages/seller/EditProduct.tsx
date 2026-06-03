@@ -1,9 +1,7 @@
-import { useParams } from 'react-router-dom';
 import AddProductPage from './AddProduct';
 
-const EditProductPage = () => {
-  const { id } = useParams<{ id: string }>();
-  return <AddProductPage editId={id} />;
-};
+// AddProductPage reads the :id route param itself (useParams) and switches to
+// edit mode when it is present, so this wrapper just renders it.
+const EditProductPage = () => <AddProductPage />;
 
 export default EditProductPage;
