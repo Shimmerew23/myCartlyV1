@@ -94,6 +94,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     css: false,
+    passWithNoTests: true,
     env: {
       VITE_API_URL: 'http://localhost:5000/api',
     },
@@ -161,6 +162,36 @@ import { afterAll, afterEach, beforeAll } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { server } from './src/test/server';
 
+// This Vitest + jsdom (v24) environment does not expose a usable `localStorage`
+// (verified: it is `undefined` here), yet the app relies on it (axios token attach,
+// auth slice). Install a deterministic in-memory implementation unconditionally so
+// every test starts from identical, isolated Storage behavior.
+class MemoryStorage implements Storage {
+  private store = new Map<string, string>();
+  get length() {
+    return this.store.size;
+  }
+  clear() {
+    this.store.clear();
+  }
+  getItem(key: string) {
+    return this.store.has(key) ? (this.store.get(key) as string) : null;
+  }
+  key(index: number) {
+    return Array.from(this.store.keys())[index] ?? null;
+  }
+  removeItem(key: string) {
+    this.store.delete(key);
+  }
+  setItem(key: string, value: string) {
+    this.store.set(key, String(value));
+  }
+}
+Object.defineProperty(globalThis, 'localStorage', {
+  value: new MemoryStorage(),
+  writable: true,
+});
+
 // jsdom does not implement matchMedia; some components read it.
 if (!window.matchMedia) {
   window.matchMedia = (query: string) =>
@@ -209,8 +240,11 @@ export function makeStore(preloadedState?: Record<string, unknown>) {
       ui: uiReducer,
     },
     preloadedState: preloadedState as never,
+    // Mirror production middleware (store/index.ts) so tests still catch non-serializable dispatches.
     middleware: (getDefaultMiddleware) =>
-      getDefaultMiddleware({ serializableCheck: false }),
+      getDefaultMiddleware({
+        serializableCheck: { ignoredActions: ['auth/setCredentials'] },
+      }),
   });
 }
 
