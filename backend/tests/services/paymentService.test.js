@@ -83,8 +83,38 @@ describe('paymentService.handleWebhook', () => {
   });
 });
 
-describe('paymentService.refundPayment', () => {
-  it('is not enabled until 2D', async () => {
-    await expect(paymentService.refundPayment()).rejects.toMatchObject({ statusCode: 400 });
+describe('paymentService.refundPayment guards', () => {
+  const paidPaypal = (over = {}) => ({
+    id: 'o1', totalPrice: 50, currency: 'USD', paymentMethod: 'paypal', paymentStatus: 'paid',
+    paymentResult: { id: 'PP-1', provider: 'paypal', captureId: 'CAP-1' }, ...over,
+  });
+
+  it('rejects a refund on an order that is not paid', async () => {
+    await expect(paymentService.refundPayment({ order: paidPaypal({ paymentStatus: 'pending' }) }))
+      .rejects.toMatchObject({ statusCode: 400 });
+    expect(paypal.refundCapture).not.toHaveBeenCalled();
+  });
+
+  it('rejects an amount greater than the remaining balance', async () => {
+    await expect(paymentService.refundPayment({ order: paidPaypal(), amount: 60 }))
+      .rejects.toMatchObject({ statusCode: 400 });
+    expect(paypal.refundCapture).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-positive amount', async () => {
+    await expect(paymentService.refundPayment({ order: paidPaypal(), amount: 0 }))
+      .rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects an online refund with no capture reference', async () => {
+    paypal.isConfigured.mockReturnValue(true);
+    await expect(paymentService.refundPayment({ order: paidPaypal({ paymentResult: { id: 'PP-1', provider: 'paypal' } }) }))
+      .rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects when the provider is not configured', async () => {
+    paypal.isConfigured.mockReturnValue(false);
+    await expect(paymentService.refundPayment({ order: paidPaypal() }))
+      .rejects.toMatchObject({ statusCode: 400 });
   });
 });

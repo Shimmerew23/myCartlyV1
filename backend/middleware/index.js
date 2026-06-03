@@ -564,6 +564,11 @@ const schemas = {
     orderId: Joi.string(),
   }),
 
+  refund: Joi.object({
+    amount: Joi.number().positive(),       // omit for a full refund of the remaining balance
+    reason: Joi.string().max(500).allow(''),
+  }),
+
   pagination: Joi.object({
     page: Joi.number().min(1).default(1),
     limit: Joi.number().min(1).max(100).default(20),

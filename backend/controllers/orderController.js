@@ -279,6 +279,23 @@ const capturePayment = async (req, res, next) => {
   return ApiResponse.success(res, { order: orderService.serializeOrder(updated), payment: result }, 'Payment captured');
 };
 
+// @desc    Refund an order (full or partial) — admin
+// @route   POST /api/orders/:id/refund
+// @access  Admin
+const refundOrder = async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next(ApiError.notFound('Order not found'));
+  const { amount, reason } = req.body;
+
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
+  if (!order) return next(ApiError.notFound('Order not found'));
+
+  const refund = await paymentService.refundPayment({ order, amount, reason, adminId: req.user._id });
+  const updated = await prisma.order.findUnique({ where: { id: order.id }, include: orderService.ORDER_INCLUDE });
+
+  logger.info(`Order ${order.orderNumber} refunded (${refund.paymentStatus}) by ${req.user.email}`);
+  return ApiResponse.success(res, { order: orderService.serializeOrder(updated), refund }, `Refund ${refund.paymentStatus}`);
+};
+
 // @desc    PayPal webhook
 // @route   POST /api/orders/webhook/paypal
 // @access  Public (PayPal) — raw body
@@ -319,6 +336,7 @@ module.exports = {
   requestReturn,
   getSellerOrders,
   capturePayment,
+  refundOrder,
   paypalWebhook,
   paymongoWebhook,
 };

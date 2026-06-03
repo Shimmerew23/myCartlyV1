@@ -190,6 +190,10 @@ export interface Order {
     id: string;
     status: string;
     receiptUrl?: string;
+    provider?: string;
+    captureId?: string;
+    refundedAmount?: number;
+    refunds?: { id: string | null; amount: number; reason: string | null; at: string }[];
   };
   paidAt?: string;
   status: OrderStatus;

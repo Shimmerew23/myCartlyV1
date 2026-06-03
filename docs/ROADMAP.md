@@ -24,7 +24,7 @@ stable feature set, and new features build on the production-ready foundation.
 | # | Phase | Status | Blocks | Spec |
 |---|---|---|---|---|
 | 1 | Database re-platform: MongoDB → PostgreSQL + Prisma | ✅ | Phases 2–4 | [postgres-migration](superpowers/specs/2026-06-01-postgres-migration-design.md) |
-| 2 | Payment re-platform: remove Stripe, add PayPal + GCash | ⬜ | Phase 3 | _tbd at phase start_ |
+| 2 | Payment re-platform: remove Stripe, add PayPal + GCash | ✅ | Phase 3 | _tbd at phase start_ |
 | 3 | Operational hardening (tests, CI/CD, monitoring, backups) | ⬜ | Phase 4 | _tbd at phase start_ |
 | 4 | New features (real-time, search/recs, multi-currency/i18n) | ⬜ | — | _tbd at phase start_ |
 
@@ -67,9 +67,9 @@ no live-data ETL.
 
 ---
 
-## Phase 2 — Payment re-platform 🟨 in progress
+## Phase 2 — Payment re-platform ✅ complete
 
-**Status:** 🟨 In progress · **Depends on:** Phase 1
+**Status:** ✅ Done (sub-plans 2A–2D) · **Depends on:** Phase 1
 
 Remove Stripe; add **PayPal** (Standard Checkout, Orders v2) + **GCash via PayMongo**; add refunds.
 Methods offered after Phase 2: PayPal, GCash, COD (Stripe + bank transfer dropped).
@@ -78,15 +78,15 @@ Methods offered after Phase 2: PayPal, GCash, COD (Stripe + bank transfer droppe
 - [x] **2A — Remove Stripe + payment-service scaffold:** stripped the Stripe SDK/webhook/raw-body route + `@stripe/*` client + `stripeAccountId` + CSP entries; `PaymentMethod` enum now `paypal|gcash|cod` (migration); added provider-agnostic `services/paymentService.js` seam (COD live; PayPal/GCash guarded). `createOrder` returns `{ order, payment }`. Frontend checkout → COD; Stripe copy/badges removed. 161 backend tests green; COD order verified end-to-end. *(Note: frontend `npm run lint` has no ESLint config — pre-existing; and `seller/Profile.tsx`/`EditProduct.tsx` have pre-existing type drift, unrelated to payments.)*
 - [x] **2B — PayPal Standard Checkout:** `config/paypal.js` (Orders v2 REST: token/create/capture/refund/verify); `paymentService` PayPal branch + transactional idempotent `markOrderPaid`; capture endpoint (`POST /orders/:id/capture`) + webhook (`POST /orders/webhook/paypal`, raw body). Redirect (approve-URL) flow — consistent with GCash. Frontend: gated PayPal option + `PaypalReturn` capture page. 173 backend tests green; env-gated (graceful 400 when unconfigured); live needs sandbox keys. *(Uses redirect flow, not JS Smart Buttons — see plan 2B.)*
 - [x] **2C — GCash via PayMongo:** `config/paymongo.js` (Sources REST: create source/payment, refund, HMAC webhook verify); `paymentService` GCash branch (redirect/approve-URL flow, PHP) + PayMongo webhook (`source.chargeable` → create payment → `markOrderPaid`; `payment.paid` idempotent backstop); webhook endpoint (`POST /orders/webhook/paymongo`, raw body). Frontend: gated GCash option + `GcashReturn` polling page. 180 backend tests green; env-gated (graceful 400 when unconfigured); live needs PayMongo keys.
-- [ ] **2D — Refunds:** full + partial via each provider; reflect in `paymentStatus` (`refunded`/`partially_refunded`); admin action + audit.
+- [x] **2D — Refunds:** `paymentService.refundPayment` (provider dispatch — PayPal `refundCapture` / PayMongo `refundPayment` / COD manual; full + partial; transactional state); admin endpoint `POST /api/orders/:id/refund` (`requireAdmin` + `auditLog('REFUND_ORDER')`) + `schemas.refund`. Reflects `paymentStatus` `refunded`/`partially_refunded`, records `refundedAmount` + `refunds[]` in `paymentResult` (no migration — enum already had both values); full refund also sets order `status` refunded. Frontend: admin Orders refund dialog (full/partial + reason). 189 backend tests green (5 unit guards + 5 integration); env-gated (graceful 400 when unconfigured).
 
 ### Workstreams
-- [ ] Remove Stripe: server SDK, client (`@stripe/*`), and the raw-body webhook route
+- [x] Remove Stripe: server SDK, client (`@stripe/*`), and the raw-body webhook route *(2A)*
 - [x] Integrate PayPal Standard Checkout (create/capture + webhook)
 - [x] Integrate GCash via PayMongo (checkout + webhook)
-- [ ] Refund flows (full + partial), reflected in order `paymentStatus`
+- [x] Refund flows (full + partial), reflected in order `paymentStatus` *(2D)*
 - [x] Order + payment writes wrapped in DB transactions *(carried over from Phase 1)*
-- [ ] Update `paymentMethod` enum (`paypal|gcash|cod`) and remove Stripe-specific fields (`stripeAccountId`, etc.)
+- [x] Update `paymentMethod` enum (`paypal|gcash|cod`) and remove Stripe-specific fields (`stripeAccountId`, etc.) *(2A)*
 
 > Currency note: catalog defaults to USD but PayMongo/GCash settle in PHP — flagged for launch; full multi-currency is Phase 4.
 

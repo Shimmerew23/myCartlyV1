@@ -114,6 +114,8 @@ orderRouter.get('/:id', authenticate, orderCtrl.getOrder);
 orderRouter.put('/:id/status', authenticate, requireSeller, orderCtrl.updateOrderStatus);
 orderRouter.post('/:id/return', authenticate, orderCtrl.requestReturn);
 orderRouter.post('/:id/capture', authenticate, orderCtrl.capturePayment);
+orderRouter.post('/:id/refund', authenticate, requireAdmin, validate(schemas.refund),
+  auditLog('REFUND_ORDER', 'Order'), orderCtrl.refundOrder);
 
 // ============================================================
 // USER ROUTES

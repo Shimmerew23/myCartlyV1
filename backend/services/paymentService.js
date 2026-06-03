@@ -6,7 +6,7 @@ const ApiError = require('../utils/ApiError');
 // ============================================================
 // Provider-agnostic payment seam
 // ------------------------------------------------------------
-// COD (2A), PayPal (2B), GCash via PayMongo (2C). Refunds (2D) to follow.
+// COD (2A), PayPal (2B), GCash via PayMongo (2C), refunds (2D).
 // Keeps orderController thin; dispatches by payment method/provider.
 // ============================================================
 
@@ -100,9 +100,68 @@ const markOrderPaid = async (orderId, { provider, captureId } = {}, client = pri
     });
   });
 
-// Refund a paid order — Plan 2D.
-const refundPayment = async () => {
-  throw ApiError.badRequest('Refunds are not yet enabled');
+// Refund a paid order (full or partial) — Plan 2D.
+// Dispatches to the original provider, then transitions paymentStatus to
+// refunded / partially_refunded and records the refund in paymentResult.
+// Returns: { status, refundId, refundedAmount, paymentStatus }
+const refundPayment = async ({ order, amount, reason, adminId } = {}) => {
+  if (!order) throw ApiError.badRequest('Order is required');
+  if (!['paid', 'partially_refunded'].includes(order.paymentStatus)) {
+    throw ApiError.badRequest('Order is not refundable');
+  }
+
+  const prev = order.paymentResult || {};
+  const provider = prev.provider || order.paymentMethod;
+  const already = Number(prev.refundedAmount || 0);
+  const remaining = Number(order.totalPrice) - already;
+
+  // Default: refund the full remaining balance.
+  const refundAmount = amount == null ? remaining : Number(amount);
+  if (!(refundAmount > 0)) throw ApiError.badRequest('Refund amount must be greater than zero');
+  if (refundAmount > remaining + 1e-9) {
+    throw ApiError.badRequest(`Refund amount exceeds the remaining balance (${remaining.toFixed(2)})`);
+  }
+
+  // Provider call happens before the DB transaction (network must not sit inside a tx).
+  let refundId = null;
+  if (provider === 'paypal') {
+    if (!paypal.isConfigured()) throw ApiError.badRequest('PayPal is not configured');
+    if (!prev.captureId) throw ApiError.badRequest('No PayPal capture reference on this order');
+    const r = await paypal.refundCapture(prev.captureId, refundAmount, order.currency || 'USD');
+    refundId = r.id;
+  } else if (provider === 'gcash') {
+    if (!paymongo.isConfigured()) throw ApiError.badRequest('GCash is not configured');
+    if (!prev.captureId) throw ApiError.badRequest('No PayMongo payment reference on this order');
+    const r = await paymongo.refundPayment(prev.captureId, refundAmount, reason || 'requested_by_customer');
+    refundId = r.id;
+  } else if (provider !== 'cod') {
+    throw ApiError.badRequest(`Refunds are not supported for provider: ${provider}`);
+  }
+  // COD: manual refund (cash returned out-of-band) — no provider call, refundId stays null.
+
+  const newRefunded = Number((already + refundAmount).toFixed(2));
+  const fully = newRefunded >= Number(order.totalPrice) - 1e-9;
+  const paymentStatus = fully ? 'refunded' : 'partially_refunded';
+
+  return prisma.$transaction(async (tx) => {
+    await tx.orderStatusEvent.create({
+      data: { orderId: order.id, status: paymentStatus, note: reason ?? undefined, updatedById: adminId ?? undefined },
+    });
+    const updated = await tx.order.update({
+      where: { id: order.id },
+      data: {
+        paymentStatus,
+        ...(fully ? { status: 'refunded' } : {}),
+        paymentResult: {
+          ...prev,
+          status: paymentStatus,
+          refundedAmount: newRefunded,
+          refunds: [...(prev.refunds || []), { id: refundId, amount: refundAmount, reason: reason ?? null, at: new Date().toISOString() }],
+        },
+      },
+    });
+    return { status: paymentStatus, refundId, refundedAmount: newRefunded, paymentStatus, order: updated };
+  });
 };
 
 // Provider webhook entry point.
