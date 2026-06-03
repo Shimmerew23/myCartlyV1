@@ -102,8 +102,10 @@ reviewRouter.post('/:reviewId/helpful', authenticate, voteHelpful);
 // ============================================================
 const orderRouter = express.Router();
 
-// NOTE: provider webhooks (PayPal 2B, PayMongo 2C) will be added here with their
-// own raw-body handling. The Stripe webhook was removed in Plan 2A.
+// PayPal webhook — raw body is applied app-level in server.js for this path
+// (before the JSON parser) so the signature can be verified. (PayMongo webhook
+// added in 2C.)
+orderRouter.post('/webhook/paypal', orderCtrl.paypalWebhook);
 
 orderRouter.post('/', authenticate, orderCtrl.createOrder);
 orderRouter.get('/my-orders', authenticate, orderCtrl.getMyOrders);
@@ -111,6 +113,7 @@ orderRouter.get('/seller-orders', authenticate, requireSeller, orderCtrl.getSell
 orderRouter.get('/:id', authenticate, orderCtrl.getOrder);
 orderRouter.put('/:id/status', authenticate, requireSeller, orderCtrl.updateOrderStatus);
 orderRouter.post('/:id/return', authenticate, orderCtrl.requestReturn);
+orderRouter.post('/:id/capture', authenticate, orderCtrl.capturePayment);
 
 // ============================================================
 // USER ROUTES

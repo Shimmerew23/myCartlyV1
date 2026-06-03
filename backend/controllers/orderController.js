@@ -265,6 +265,36 @@ const getSellerOrders = async (req, res, next) => {
   });
 };
 
+// @desc    Capture an approved payment (PayPal return flow)
+// @route   POST /api/orders/:id/capture
+// @access  Private (owner)
+const capturePayment = async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next(ApiError.notFound('Order not found'));
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
+  if (!order) return next(ApiError.notFound('Order not found'));
+  if (order.userId !== req.user._id) return next(ApiError.forbidden());
+
+  const result = await paymentService.capturePayment({ order });
+  const updated = await prisma.order.findUnique({ where: { id: order.id }, include: orderService.ORDER_INCLUDE });
+  return ApiResponse.success(res, { order: orderService.serializeOrder(updated), payment: result }, 'Payment captured');
+};
+
+// @desc    PayPal webhook
+// @route   POST /api/orders/webhook/paypal
+// @access  Public (PayPal) — raw body
+const paypalWebhook = async (req, res) => {
+  const rawBody = Buffer.isBuffer(req.body)
+    ? req.body.toString('utf8')
+    : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
+  try {
+    await paymentService.handleWebhook('paypal', { headers: req.headers, rawBody });
+    return res.json({ received: true });
+  } catch (err) {
+    logger.error(`PayPal webhook error: ${err.message}`);
+    return res.status(400).json({ received: false });
+  }
+};
+
 module.exports = {
   createOrder,
   getMyOrders,
@@ -272,4 +302,6 @@ module.exports = {
   updateOrderStatus,
   requestReturn,
   getSellerOrders,
+  capturePayment,
+  paypalWebhook,
 };

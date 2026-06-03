@@ -76,13 +76,13 @@ Methods offered after Phase 2: PayPal, GCash, COD (Stripe + bank transfer droppe
 
 ### Sub-plan progress
 - [x] **2A — Remove Stripe + payment-service scaffold:** stripped the Stripe SDK/webhook/raw-body route + `@stripe/*` client + `stripeAccountId` + CSP entries; `PaymentMethod` enum now `paypal|gcash|cod` (migration); added provider-agnostic `services/paymentService.js` seam (COD live; PayPal/GCash guarded). `createOrder` returns `{ order, payment }`. Frontend checkout → COD; Stripe copy/badges removed. 161 backend tests green; COD order verified end-to-end. *(Note: frontend `npm run lint` has no ESLint config — pre-existing; and `seller/Profile.tsx`/`EditProduct.tsx` have pre-existing type drift, unrelated to payments.)*
-- [ ] **2B — PayPal Standard Checkout:** create + capture order (Orders v2) + webhook; frontend Smart Buttons.
+- [x] **2B — PayPal Standard Checkout:** `config/paypal.js` (Orders v2 REST: token/create/capture/refund/verify); `paymentService` PayPal branch + transactional idempotent `markOrderPaid`; capture endpoint (`POST /orders/:id/capture`) + webhook (`POST /orders/webhook/paypal`, raw body). Redirect (approve-URL) flow — consistent with GCash. Frontend: gated PayPal option + `PaypalReturn` capture page. 173 backend tests green; env-gated (graceful 400 when unconfigured); live needs sandbox keys. *(Uses redirect flow, not JS Smart Buttons — see plan 2B.)*
 - [ ] **2C — GCash via PayMongo:** create source/payment + webhook (redirect flow); frontend redirect handling.
 - [ ] **2D — Refunds:** full + partial via each provider; reflect in `paymentStatus` (`refunded`/`partially_refunded`); admin action + audit.
 
 ### Workstreams
 - [ ] Remove Stripe: server SDK, client (`@stripe/*`), and the raw-body webhook route
-- [ ] Integrate PayPal Standard Checkout (create/capture + webhook)
+- [x] Integrate PayPal Standard Checkout (create/capture + webhook)
 - [ ] Integrate GCash via PayMongo (checkout + webhook)
 - [ ] Refund flows (full + partial), reflected in order `paymentStatus`
 - [x] Order + payment writes wrapped in DB transactions *(carried over from Phase 1)*

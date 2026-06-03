@@ -98,8 +98,9 @@ app.use(
 // PARSING & FORMATTING MIDDLEWARE
 // ============================================================
 
-// Provider webhooks needing a raw body (PayPal 2B / PayMongo 2C) will register
-// their express.raw() routes here, BEFORE the json parser.
+// Provider webhooks need the raw body for signature verification — register
+// raw parsing for those paths BEFORE the JSON parser. (PayMongo added in 2C.)
+app.use('/api/orders/webhook/paypal', express.raw({ type: '*/*' }));
 
 // Body parsers
 app.use(express.json({ limit: '10mb' }));

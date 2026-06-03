@@ -105,6 +105,7 @@ const CheckoutPage = () => {
     setPlacing(true);
     try {
       const createdOrders: any[] = [];
+      let approveUrl: string | null = null;
 
       // Create one order per store group
       for (const group of storeGroups) {
@@ -115,10 +116,19 @@ const CheckoutPage = () => {
           selectedItemIds: group.itemIds,
         });
         createdOrders.push(data.data.order);
+        // Online providers (PayPal) return an approval URL to redirect to.
+        if (!approveUrl && data.data.payment?.approveUrl) approveUrl = data.data.payment.approveUrl;
       }
 
       dispatch(clearCart());
       dispatch(deselectAllItems());
+
+      // Redirect to the provider's approval page; the order(s) are created as pending
+      // and captured on return. (Multi-seller online payment redirects to the first.)
+      if (approveUrl) {
+        window.location.href = approveUrl;
+        return;
+      }
 
       if (createdOrders.length === 1) {
         toast.success('Order placed successfully!');
@@ -227,6 +237,9 @@ const CheckoutPage = () => {
                 <h2 className="font-headline font-black text-lg flex items-center gap-2"><CreditCard size={18} /> Payment Method</h2>
                 <div className="space-y-3">
                   {[
+                    ...(import.meta.env.VITE_PAYPAL_ENABLED === 'true'
+                      ? [{ key: 'paypal', label: 'PayPal', sub: 'Pay with your PayPal account', emoji: '🅿️' }]
+                      : []),
                     { key: 'cod', label: 'Cash on Delivery', sub: 'Pay when your order arrives', emoji: '📦' },
                   ].map((m) => (
                     <label key={m.key} className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${paymentMethod === m.key ? 'border-primary-900 bg-primary-50/40' : 'border-outline-variant/30 hover:border-outline-variant'}`}>
@@ -237,7 +250,10 @@ const CheckoutPage = () => {
                   ))}
                 </div>
                 <div className="bg-primary-50/50 border border-primary-100 rounded-md p-3 text-xs text-primary-700">
-                  <Shield size={12} className="inline mr-1" />Online payment via PayPal and GCash is coming soon. For now, choose Cash on Delivery.
+                  <Shield size={12} className="inline mr-1" />
+                  {import.meta.env.VITE_PAYPAL_ENABLED === 'true'
+                    ? 'GCash online payment is coming soon. PayPal and Cash on Delivery are available now.'
+                    : 'Online payment via PayPal & GCash is coming soon — choose Cash on Delivery for now.'}
                 </div>
                 <div className="flex gap-3">
                   <button onClick={() => setStep('carrier')} className="btn-secondary flex-1 justify-center">← Back</button>

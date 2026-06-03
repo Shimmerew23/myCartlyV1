@@ -24,6 +24,7 @@ import ProductDetailPage from './pages/ProductDetail';
 import StorePage from './pages/Store';
 import CartPage from './pages/Cart';
 import CheckoutPage from './pages/Checkout';
+import PaypalReturn from './pages/PaypalReturn';
 
 // User pages
 import ProfilePage from './pages/Profile';
@@ -105,6 +106,8 @@ function App() {
           {/* Protected user routes */}
           <Route element={<ProtectedRoute />}>
             <Route path="/checkout" element={<CheckoutPage />} />
+            <Route path="/checkout/paypal/return" element={<PaypalReturn mode="return" />} />
+            <Route path="/checkout/paypal/cancel" element={<PaypalReturn mode="cancel" />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/orders" element={<OrdersPage />} />
             <Route path="/orders/:id" element={<OrderDetailPage />} />
