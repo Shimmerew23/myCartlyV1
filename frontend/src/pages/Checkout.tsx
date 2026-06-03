@@ -240,6 +240,9 @@ const CheckoutPage = () => {
                     ...(import.meta.env.VITE_PAYPAL_ENABLED === 'true'
                       ? [{ key: 'paypal', label: 'PayPal', sub: 'Pay with your PayPal account', emoji: '🅿️' }]
                       : []),
+                    ...(import.meta.env.VITE_GCASH_ENABLED === 'true'
+                      ? [{ key: 'gcash', label: 'GCash', sub: 'Pay with your GCash wallet', emoji: '🇵🇭' }]
+                      : []),
                     { key: 'cod', label: 'Cash on Delivery', sub: 'Pay when your order arrives', emoji: '📦' },
                   ].map((m) => (
                     <label key={m.key} className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${paymentMethod === m.key ? 'border-primary-900 bg-primary-50/40' : 'border-outline-variant/30 hover:border-outline-variant'}`}>
@@ -251,9 +254,14 @@ const CheckoutPage = () => {
                 </div>
                 <div className="bg-primary-50/50 border border-primary-100 rounded-md p-3 text-xs text-primary-700">
                   <Shield size={12} className="inline mr-1" />
-                  {import.meta.env.VITE_PAYPAL_ENABLED === 'true'
-                    ? 'GCash online payment is coming soon. PayPal and Cash on Delivery are available now.'
-                    : 'Online payment via PayPal & GCash is coming soon — choose Cash on Delivery for now.'}
+                  {(() => {
+                    const online = [
+                      import.meta.env.VITE_PAYPAL_ENABLED === 'true' && 'PayPal',
+                      import.meta.env.VITE_GCASH_ENABLED === 'true' && 'GCash',
+                    ].filter(Boolean) as string[];
+                    if (online.length === 0) return 'Online payment via PayPal & GCash is coming soon — choose Cash on Delivery for now.';
+                    return `${online.join(' & ')} and Cash on Delivery are available now.`;
+                  })()}
                 </div>
                 <div className="flex gap-3">
                   <button onClick={() => setStep('carrier')} className="btn-secondary flex-1 justify-center">← Back</button>

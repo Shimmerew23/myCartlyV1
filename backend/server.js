@@ -99,8 +99,9 @@ app.use(
 // ============================================================
 
 // Provider webhooks need the raw body for signature verification — register
-// raw parsing for those paths BEFORE the JSON parser. (PayMongo added in 2C.)
+// raw parsing for those paths BEFORE the JSON parser.
 app.use('/api/orders/webhook/paypal', express.raw({ type: '*/*' }));
+app.use('/api/orders/webhook/paymongo', express.raw({ type: '*/*' }));
 
 // Body parsers
 app.use(express.json({ limit: '10mb' }));

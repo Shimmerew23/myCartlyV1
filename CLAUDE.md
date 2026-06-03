@@ -60,7 +60,9 @@ router.post('/', authenticate, requireSeller, uploadLimiter,
 
 **Images** — uploaded to Cloudinary (not local disk), with UUID-based `public_id`s stored alongside the URL (in the `ProductImage` table) so old assets can be deleted on replace. `processImages` does Sharp resize/WebP before upload. The Docker `uploads/` volume is legacy.
 
-**Stripe webhook** — `/api/orders/webhook` needs the raw body, so `express.raw()` is registered for that path in `server.js` *before* the JSON body parser. Don't move the body-parser ordering.
+**Payments** — provider-agnostic seam in `services/paymentService.js` (dispatches by method/provider). Stripe is fully removed. Methods: **COD**, **PayPal** (Standard Checkout / Orders v2, `config/paypal.js`), **GCash via PayMongo** (Sources flow, `config/paymongo.js`). PayPal + GCash share a redirect/approve-URL flow: `createOrder` returns `{ order, payment }` and the frontend redirects to `payment.approveUrl`; confirmation comes back via capture (PayPal: `POST /orders/:id/capture` on return) or webhook. `markOrderPaid` is the single transactional, idempotent paid/confirmed transition. GCash settles in **PHP** (catalog is USD; full multi-currency is Phase 4 — see ADR 0004).
+
+**Provider webhooks** — `/api/orders/webhook/paypal` and `/api/orders/webhook/paymongo` need the raw body for signature verification, so `express.raw()` is registered for **each** path in `server.js` *before* the JSON body parser. Don't move the body-parser ordering. Each provider client owns its `verifyWebhookSignature` + `isConfigured` (env-gated; mocked in tests).
 
 **Auth model** — JWT access (15m) + refresh (7d) tokens; refresh tokens and a logout blacklist live in Redis. Five roles: `user` / `seller` / `admin` / `superadmin` / `warehouse`. Password hashing, token generation, lockout, and the user serializers live in `services/userService.js` (`config/passport.js` uses Prisma). Google OAuth via Passport; the callback sets cookies and redirects to `/oauth/callback?token=...` on the frontend (it does **not** return JSON). Emails are stored lowercase — the API lowercases on register and on login lookup.
 

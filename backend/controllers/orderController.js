@@ -295,6 +295,22 @@ const paypalWebhook = async (req, res) => {
   }
 };
 
+// @desc    PayMongo webhook (GCash)
+// @route   POST /api/orders/webhook/paymongo
+// @access  Public (PayMongo) — raw body
+const paymongoWebhook = async (req, res) => {
+  const rawBody = Buffer.isBuffer(req.body)
+    ? req.body.toString('utf8')
+    : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
+  try {
+    await paymentService.handleWebhook('paymongo', { headers: req.headers, rawBody });
+    return res.json({ received: true });
+  } catch (err) {
+    logger.error(`PayMongo webhook error: ${err.message}`);
+    return res.status(400).json({ received: false });
+  }
+};
+
 module.exports = {
   createOrder,
   getMyOrders,
@@ -304,4 +320,5 @@ module.exports = {
   getSellerOrders,
   capturePayment,
   paypalWebhook,
+  paymongoWebhook,
 };

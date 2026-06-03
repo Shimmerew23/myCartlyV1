@@ -102,10 +102,10 @@ reviewRouter.post('/:reviewId/helpful', authenticate, voteHelpful);
 // ============================================================
 const orderRouter = express.Router();
 
-// PayPal webhook — raw body is applied app-level in server.js for this path
-// (before the JSON parser) so the signature can be verified. (PayMongo webhook
-// added in 2C.)
+// Provider webhooks — raw body is applied app-level in server.js for these paths
+// (before the JSON parser) so the signatures can be verified.
 orderRouter.post('/webhook/paypal', orderCtrl.paypalWebhook);
+orderRouter.post('/webhook/paymongo', orderCtrl.paymongoWebhook);
 
 orderRouter.post('/', authenticate, orderCtrl.createOrder);
 orderRouter.get('/my-orders', authenticate, orderCtrl.getMyOrders);

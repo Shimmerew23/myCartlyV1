@@ -25,6 +25,7 @@ import StorePage from './pages/Store';
 import CartPage from './pages/Cart';
 import CheckoutPage from './pages/Checkout';
 import PaypalReturn from './pages/PaypalReturn';
+import GcashReturn from './pages/GcashReturn';
 
 // User pages
 import ProfilePage from './pages/Profile';
@@ -108,6 +109,8 @@ function App() {
             <Route path="/checkout" element={<CheckoutPage />} />
             <Route path="/checkout/paypal/return" element={<PaypalReturn mode="return" />} />
             <Route path="/checkout/paypal/cancel" element={<PaypalReturn mode="cancel" />} />
+            <Route path="/checkout/gcash/return" element={<GcashReturn mode="return" />} />
+            <Route path="/checkout/gcash/cancel" element={<GcashReturn mode="cancel" />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/orders" element={<OrdersPage />} />
             <Route path="/orders/:id" element={<OrderDetailPage />} />

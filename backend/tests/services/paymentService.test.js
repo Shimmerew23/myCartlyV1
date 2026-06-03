@@ -1,10 +1,13 @@
 jest.mock('../../config/paypal');
+jest.mock('../../config/paymongo');
 const paypal = require('../../config/paypal');
+const paymongo = require('../../config/paymongo');
 const paymentService = require('../../services/paymentService');
 
 beforeEach(() => {
   jest.clearAllMocks();
   paypal.isConfigured.mockReturnValue(false);
+  paymongo.isConfigured.mockReturnValue(false);
 });
 
 describe('paymentService.createPayment', () => {
@@ -27,8 +30,19 @@ describe('paymentService.createPayment', () => {
     expect(paypal.createOrder).toHaveBeenCalledWith(expect.objectContaining({ amount: 53.99, currency: 'USD', referenceId: 'o1' }));
   });
 
-  it('rejects GCash until 2C', async () => {
-    await expect(paymentService.createPayment({ order: {}, method: 'gcash' })).rejects.toMatchObject({ statusCode: 400 });
+  it('rejects GCash when PayMongo is not configured', async () => {
+    paymongo.isConfigured.mockReturnValue(false);
+    await expect(paymentService.createPayment({ order: { id: 'o1', totalPrice: 10 }, method: 'gcash' }))
+      .rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('creates a GCash source and returns the checkout URL when configured', async () => {
+    paymongo.isConfigured.mockReturnValue(true);
+    paymongo.createSource.mockResolvedValue({ id: 'src_1', checkoutUrl: 'https://paymongo/checkout/src_1', status: 'pending' });
+    const res = await paymentService.createPayment({ order: { id: 'o1', totalPrice: 53.99, currency: 'USD' }, method: 'gcash' });
+    expect(res).toMatchObject({ provider: 'gcash', status: 'pending', approveUrl: 'https://paymongo/checkout/src_1', providerRef: 'src_1' });
+    // PayMongo settles in PHP regardless of the catalog currency.
+    expect(paymongo.createSource).toHaveBeenCalledWith(expect.objectContaining({ amount: 53.99, currency: 'PHP' }));
   });
 
   it('rejects an unsupported method', async () => {
@@ -57,6 +71,11 @@ describe('paymentService.handleWebhook', () => {
   it('rejects a PayPal webhook with an invalid signature', async () => {
     paypal.verifyWebhookSignature.mockResolvedValue(false);
     await expect(paymentService.handleWebhook('paypal', { headers: {}, rawBody: '{}' })).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects a PayMongo webhook with an invalid signature', async () => {
+    paymongo.verifyWebhookSignature.mockReturnValue(false);
+    await expect(paymentService.handleWebhook('paymongo', { headers: {}, rawBody: '{}' })).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it('rejects an unknown provider', async () => {
