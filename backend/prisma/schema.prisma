@@ -427,19 +427,30 @@ model CouponUsage {
 }
 
 model Carrier {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  // NOTE: remaining Carrier fields are filled in during Plan 1E from backend/models/Carrier.js
+  id                  String   @id @default(uuid())
+  name                String
+  code                String   @unique
+  trackingUrlTemplate String?
+  logoUrl             String?
+  isActive            Boolean  @default(true)
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
 }
 
 model Warehouse {
   id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  address   Json
   managerId String?
   manager   User?    @relation(fields: [managerId], references: [id])
+  isActive  Boolean  @default(true)
+  notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  // NOTE: remaining Warehouse fields are filled in during Plan 1E from backend/models/Warehouse.js
 
   @@index([managerId])
 }

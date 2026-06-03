@@ -4,8 +4,6 @@ const stripe = process.env.STRIPE_SECRET_KEY
 const { prisma } = require('../config/prisma');
 const orderService = require('../services/orderService');
 const productService = require('../services/productService');
-// Carrier stays on Mongoose until Plan 1E fills in the Prisma Carrier model.
-const Carrier = require('../models/Carrier');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { sendEmail, emailTemplates } = require('../utils/email');
@@ -190,7 +188,7 @@ const updateOrderStatus = async (req, res, next) => {
     let resolvedCarrierName = null;
     let resolvedTrackingUrl = trackingUrl || null;
     if (carrierId) {
-      const carrier = await Carrier.findById(carrierId);
+      const carrier = await prisma.carrier.findUnique({ where: { id: carrierId } }).catch(() => null);
       if (carrier) {
         resolvedCarrierName = carrier.name;
         if (carrier.trackingUrlTemplate) {

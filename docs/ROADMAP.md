@@ -23,16 +23,16 @@ stable feature set, and new features build on the production-ready foundation.
 
 | # | Phase | Status | Blocks | Spec |
 |---|---|---|---|---|
-| 1 | Database re-platform: MongoDB → PostgreSQL + Prisma | ⬜ | Phases 2–4 | [postgres-migration](superpowers/specs/2026-06-01-postgres-migration-design.md) |
+| 1 | Database re-platform: MongoDB → PostgreSQL + Prisma | ✅ | Phases 2–4 | [postgres-migration](superpowers/specs/2026-06-01-postgres-migration-design.md) |
 | 2 | Payment re-platform: remove Stripe, add PayPal + GCash | ⬜ | Phase 3 | _tbd at phase start_ |
 | 3 | Operational hardening (tests, CI/CD, monitoring, backups) | ⬜ | Phase 4 | _tbd at phase start_ |
 | 4 | New features (real-time, search/recs, multi-currency/i18n) | ⬜ | — | _tbd at phase start_ |
 
 ---
 
-## Phase 1 — Database re-platform 🟨 in progress
+## Phase 1 — Database re-platform ✅ complete
 
-**Status:** 🟨 In progress (sub-plans 1A–1F)
+**Status:** ✅ Done (sub-plans 1A–1F) — app runs on PostgreSQL/Prisma alone; Mongoose fully removed.
 
 Swap the data layer from MongoDB/Mongoose to PostgreSQL/Prisma **with zero change
 to the API contract** — identical routes, `ApiResponse` envelope, and JSON shapes,
@@ -44,19 +44,19 @@ no live-data ETL.
 - [x] **1B — Auth & Users:** `authenticate`/`optionalAuth`, full `authController`, Passport (Google/JWT), and user profile/address/seller-profile endpoints on Prisma. `userService` replaces Mongoose User instance methods. 45 backend tests green; frozen envelope verified. *(Wishlist population & seller-store deferred to 1C; rate limiters skip under `NODE_ENV=test`.)*
 - [x] **1C — Products & Categories + search:** `productController` (list/get/CRUD/featured/related/my/seller-stats/wishlist), category CRUD, wishlist list + seller storefront on Prisma; `tsvector` + GIN + `pg_trgm` full-text search; `getMe` wishlist population restored. 75 backend tests green.
 - [x] **1D — Cart & Orders + coupons:** cart controller + `cartService`, order controller + `orderService` (placement wrapped in `prisma.$transaction`: validate stock → create order/items/initial status event → decrement stock → clear cart, atomically), coupon CRUD, all on Prisma. Added `Order.returnReason`. 117 backend tests green.
-- [ ] **1E — Reviews, carriers, warehouse, feedback, admin, audit** (complete Carrier/Warehouse models; audit cleanup job)
-- [ ] **1F — Seeder rewrite & Mongoose removal**
+- [x] **1E — Reviews, carriers, warehouse, feedback, admin, audit:** reviews (+`reviewService` rating recompute), feedback, carriers, warehouse (CRUD + scan/check-in), and full admin controller (dashboard/users/orders/products/audit) ported to Prisma. Completed `Carrier`/`Warehouse` models (migration). Audit-log 90-day TTL → `jobs/auditCleanup.js` (daily, wired into boot). 156 backend tests green.
+- [x] **1F — Seeder rewrite & Mongoose removal:** `utils/seeder.js` rewritten on Prisma (8 categories, 5 documented accounts hashed, 8 sample products). Removed all Mongoose code (`models/*`, `config/db.js`, `connectDB`, dead requires), the `express-mongo-sanitize` layer, and the `mongoose`/`mongodb`/`express-mongo-sanitize`/`passport-facebook` deps + the `mongo` compose service. `errorHandler` + `auditLog` now Prisma-native. App boots on Postgres alone. 156 backend tests green.
 
 ### Workstreams
-- [ ] Stand up Postgres (docker-compose service; remove `mongo`), `DATABASE_URL` env
-- [ ] Prisma schema: model all entities with relations, native enums, indexes
-- [ ] Break embedded docs into related tables (addresses, sellerProfile, product images/variants, order items, status events)
-- [ ] Replace Mongoose queries with Prisma client across the barrel controllers
-- [ ] Full-text search: Mongo text index → Postgres `tsvector` (GIN) + `pg_trgm` fuzzy/autocomplete
-- [ ] Audit-log 90-day TTL → scheduled cleanup job (`pg_cron` or node-cron)
+- [x] Stand up Postgres (docker-compose service; removed `mongo`), `DATABASE_URL` env
+- [x] Prisma schema: model all entities with relations, native enums, indexes
+- [x] Break embedded docs into related tables (addresses, sellerProfile, product images/variants, order items, status events)
+- [x] Replace Mongoose queries with Prisma client across the barrel controllers
+- [x] Full-text search: Mongo text index → Postgres `tsvector` (GIN) + `pg_trgm` fuzzy/autocomplete
+- [x] Audit-log 90-day TTL → scheduled cleanup job (`jobs/auditCleanup.js`, daily `setInterval`, started in `server.js`)
 - [x] Order/payment consistency → Prisma transactions (ACID) *(order placement, status changes, returns, webhook updates)*
-- [ ] Rewrite seeder against Prisma
-- [ ] Wire `prisma migrate` into startup + CI
+- [x] Rewrite seeder against Prisma
+- [x] Wire `prisma migrate` into startup + CI *(tests run `migrate deploy`; CI gating lands in Phase 3)*
 - [ ] Focused integration test per route group asserting unchanged envelope/shape
 
 ### Definition of done

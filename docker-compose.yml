@@ -2,30 +2,6 @@ version: '3.9'
 
 services:
   # ─────────────────────────────────────────
-  # MongoDB
-  # ─────────────────────────────────────────
-  mongo:
-    image: mongo:7.0
-    container_name: CartLy_mongo
-    restart: unless-stopped
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: CartLypass
-      MONGO_INITDB_DATABASE: CartLy_ecommerce
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
-    networks:
-      - CartLy_net
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ─────────────────────────────────────────
   # PostgreSQL (Prisma)
   # ─────────────────────────────────────────
   postgres:
@@ -82,7 +58,6 @@ services:
     env_file: ./backend/.env
     environment:
       NODE_ENV: production
-      MONGODB_URI: mongodb://admin:CartLypass@mongo:27017/CartLy_ecommerce?authSource=admin
       DATABASE_URL: postgresql://cartly:cartlypass@postgres:5432/cartly_ecommerce?schema=public
       REDIS_URL: redis://:CartLyredis@redis:6379
       PORT: 5000
@@ -92,8 +67,6 @@ services:
       - ./backend/uploads:/app/uploads
       - ./backend/logs:/app/logs
     depends_on:
-      mongo:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -137,7 +110,6 @@ services:
       - CartLy_net
 
 volumes:
-  mongo_data:
   postgres_data:
   redis_data:
 
