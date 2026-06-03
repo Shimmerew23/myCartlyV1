@@ -1,5 +1,5 @@
 // vite.config.ts
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
@@ -7,6 +7,16 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
+  },
+  test: {
+    globals: false, // test files import { describe, it, expect, vi } from 'vitest' explicitly
+    environment: 'jsdom',
+    setupFiles: ['./vitest.setup.ts'],
+    css: false,
+    passWithNoTests: true,
+    env: {
+      VITE_API_URL: 'http://localhost:5000/api',
+    },
   },
   server: {
     port: 5173,

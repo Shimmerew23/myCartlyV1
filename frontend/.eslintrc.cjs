@@ -26,4 +26,15 @@ module.exports = {
     // Revisit when these components gain test coverage in 3B.
     'react-hooks/exhaustive-deps': 'off',
   },
+  overrides: [
+    {
+      files: ['**/*.test.ts', '**/*.test.tsx', 'src/test/**/*.{ts,tsx}', 'vitest.setup.ts'],
+      env: { node: true, browser: true },
+      rules: {
+        // Test fixtures intentionally use partial/`any` shapes and empty stub fns.
+        '@typescript-eslint/no-explicit-any': 'off',
+        '@typescript-eslint/no-empty-function': 'off',
+      },
+    },
+  ],
 };
