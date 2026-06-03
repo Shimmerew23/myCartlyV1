@@ -30,7 +30,7 @@ jobs:
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://cartly:cartlypass@localhost:5432/cartly_test?schema=public
-      JWT_ACCESS_SECRET: ci-access-secret
+      JWT_SECRET: ci-access-secret
       JWT_REFRESH_SECRET: ci-refresh-secret
       SESSION_SECRET: ci-session-secret
     steps:
