@@ -6,7 +6,7 @@ cycle. This file is the living index; update statuses as work lands.
 
 - **Status legend:** ⬜ Not started · 🟨 In progress · ✅ Done
 - **Goal:** real paying users / live launch (strictest reliability + security bar)
-- **Last updated:** 2026-06-04
+- **Last updated:** 2026-06-05
 
 Related docs:
 - Requirements baseline: [../REQUIREMENTS.md](../REQUIREMENTS.md)
@@ -57,7 +57,7 @@ no live-data ETL.
 - [x] Order/payment consistency → Prisma transactions (ACID) *(order placement, status changes, returns, webhook updates)*
 - [x] Rewrite seeder against Prisma
 - [x] Wire `prisma migrate` into startup + CI *(tests run `migrate deploy`; CI gating lands in Phase 3)*
-- [ ] Focused integration test per route group asserting unchanged envelope/shape
+- [x] Focused integration test per route group asserting unchanged envelope/shape *(`backend/tests/envelope.test.js` + `tests/helpers/envelope.js` — one representative endpoint per router asserts the `ApiResponse` envelope, paginated variant, error envelope, and `_id`/nested aliases)*
 
 ### Definition of done
 - All existing API routes return the same envelope and JSON shapes as before.
@@ -112,7 +112,7 @@ Launch context: **real paying users** (full hardening bar). Infra: **paid manage
 - [x] **3F — Security pass + deployment runbook:** removed 8 dead/deprecated deps (`csurf`, `csrf`, `xss-clean`, `celebrate`, `express-validator`, `apicache`, `etag`, npm `crypto` shim) + dead `handleValidationErrors`; documented CSRF posture (bearer-token API → no CSRF middleware; dropped vestigial `X-CSRF-Token` from CORS) and layered XSS defense (React encoding + Joi + Helmet CSP); added a production fail-fast secret guard (`utils/validateEnv.js`) and removed the weak `SESSION_SECRET` default; `npm audit` remediated non-breaking — backend `nodemailer` 6→8 (SMTP command-injection fix), 9→1 advisory (residual `uuid`), frontend removed unused `swiper` (critical prototype-pollution) → 17→10 (rest dev/build-chain); stripped plaintext default passwords from README; cold-start/rollback runbook `docs/runbooks/deployment.md`. Spec: [phase3f](superpowers/specs/2026-06-05-phase3f-security-pass-design.md)
 
 ### Workstreams
-- [ ] Backend test suite: Jest + Supertest (controllers, routes, auth, RBAC) *(already exists — 189 tests; gated by CI in 3A)*
+- [x] Backend test suite: Jest + Supertest (controllers, routes, auth, RBAC) *(28 suites / 209 tests covering every route group + RBAC; gated by CI in 3A)*
 - [x] Frontend test suite: Vitest + React Testing Library; Playwright E2E for critical flows *(3B done; 3C E2E done)*
 - [x] CI/CD: GitHub Actions — lint → typecheck → test → build *(3A — backend Jest on a Postgres service; frontend ESLint + build; gates PRs into `main`)*
 - [x] Error tracking: Sentry (backend + frontend) *(3D — env-gated/graceful)*
