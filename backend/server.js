@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('./config/sentry').initSentry();
 require('express-async-errors');
 
 const express = require('express');
