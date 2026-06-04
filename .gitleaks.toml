@@ -1,0 +1,18 @@
+title = "CartLy gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore documented env templates and their placeholder values"
+paths = [
+  '''backend/\.env\.example''',
+  '''frontend/\.env\.example''',
+  '''docs/runbooks/secrets-and-config\.md''',
+]
+regexes = [
+  '''your_[a-z_]+''',
+  '''change_in_production''',
+  '''sk_test_your_paymongo_secret_key''',
+  '''ci-[a-z]+-(secret|refresh|session)''',
+]
