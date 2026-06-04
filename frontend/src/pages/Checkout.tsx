@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Shield, Lock, CreditCard, Truck, ChevronDown, ChevronUp, Store } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store';
-import { clearCart, deselectAllItems } from '@/store/slices/cartSlice';
+import { clearCart } from '@/store/slices/cartSlice';
 import api from '@/api/axios';
 import toast from 'react-hot-toast';
 import { Helmet } from 'react-helmet-async';
@@ -121,7 +121,11 @@ const CheckoutPage = () => {
       }
 
       dispatch(clearCart());
-      dispatch(deselectAllItems());
+      // Note: deselectAllItems() is omitted here intentionally.
+      // Calling it synchronously before navigate() triggers the checkout
+      // guard (items > 0 && selectedItemIds === 0) and redirects to /cart,
+      // racing against the intended navigate. clearCart.fulfilled's
+      // handleCartUpdate already clears selectedItemIds once items are gone.
 
       // Redirect to the provider's approval page; the order(s) are created as pending
       // and captured on return. (Multi-seller online payment redirects to the first.)
