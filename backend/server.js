@@ -77,6 +77,7 @@ app.use(
       // List of explicitly allowed origins
       const allowedOrigins = [
         'https://mcartly.vercel.app',
+        'https://mcartlydev.vercel.app',
         process.env.FRONTEND_URL,
       ].filter(Boolean);
 
