@@ -99,7 +99,7 @@ Methods offered after Phase 2: PayPal, GCash, COD (Stripe + bank transfer droppe
 
 ## Phase 3 — Operational hardening 🟨 in progress (real-money bar)
 
-**Status:** 🟨 In progress (3A–3D complete) · **Depends on:** Phase 2 · **Spec:** [phase3-operational-hardening](superpowers/specs/2026-06-04-phase3-operational-hardening-design.md)
+**Status:** 🟨 In progress (3A–3E complete) · **Depends on:** Phase 2 · **Spec:** [phase3-operational-hardening](superpowers/specs/2026-06-04-phase3-operational-hardening-design.md)
 
 Launch context: **real paying users** (full hardening bar). Infra: **paid managed** (recommended Neon Postgres + Upstash Redis). Decomposed safety-net-first into sub-plans 3A–3F.
 
@@ -108,7 +108,7 @@ Launch context: **real paying users** (full hardening bar). Infra: **paid manage
 - [x] **3B — Frontend unit/component tests:** Vitest + React Testing Library + MSW (`frontend/src/**/*.test.ts(x)`, harness in `src/test/` + `vitest.setup.ts`). 26 tests: axios envelope unwrap + 401 refresh-queue dedupe/logout/auth-exclusion, auth slice + login thunk, cart math + coupon preservation + selection pruning, checkout payment-method selection, admin refund dialog (validation, full/partial payload, dialog close). Wired `npm run test:run` into the frontend CI job. Spec: [phase3b](superpowers/specs/2026-06-04-phase3b-frontend-tests-design.md)
 - [x] **3C — Playwright E2E:** Chromium suite (`frontend/e2e/`) against `vite preview` + a seeded real backend. Buyer COD journey, admin full-refund (on a seeded paid order via `backend/utils/seedE2E.js`), seller dashboard smoke. Runs as a separate CI `e2e` job (`needs:` backend+frontend). Spec: [phase3c](superpowers/specs/2026-06-04-phase3c-playwright-e2e-design.md)
 - [x] **3D — Observability:** Env-gated Sentry (`@sentry/node` + `@sentry/react`, no-op without a DSN; backend captures 5xx in `errorHandler`, frontend lean errors-only + `<Sentry.ErrorBoundary>`) and real probes `GET /health/live` / `GET /health/ready` (Postgres required → 503 when down; Redis optional → `degraded`). Spec: [phase3d](superpowers/specs/2026-06-04-phase3d-observability-design.md)
-- [ ] **3E — Backups, DR & secrets:** provision managed Postgres/Redis, automated backups + PITR, tested restore runbook, secrets externalized.
+- [x] **3E — Backups, DR & secrets:** Neon PITR as primary DR; repo `pg_dump`/`pg_restore`/verify scripts (`backend/scripts/`) exercised by a CI `restore-drill` job (seed → backup → restore → verify counts); a weekly **encrypted** off-Neon dump workflow (`.github/workflows/db-backup.yml`, gpg AES256, 30-day artifact — required because the repo is public); `render.yaml` secrets declared `sync: false`; gitleaks pre-commit hook; and two runbooks (`docs/runbooks/disaster-recovery.md`, `secrets-and-config.md`). Spec: [phase3e](superpowers/specs/2026-06-04-phase3e-backups-dr-secrets-design.md)
 - [ ] **3F — Security pass + deployment runbook:** replace deprecated `csurf`/`xss-clean`, `npm audit`, config review, cold-start deploy runbook.
 
 ### Workstreams
@@ -117,8 +117,8 @@ Launch context: **real paying users** (full hardening bar). Infra: **paid manage
 - [x] CI/CD: GitHub Actions — lint → typecheck → test → build *(3A — backend Jest on a Postgres service; frontend ESLint + build; gates PRs into `main`)*
 - [x] Error tracking: Sentry (backend + frontend) *(3D — env-gated/graceful)*
 - [x] Health-check endpoints (liveness/readiness) for DB + Redis *(3D — `/health/live` + `/health/ready`)*
-- [ ] Database backups + documented disaster-recovery procedure
-- [ ] Secrets management (no secrets in repo; documented env/secret strategy)
+- [x] Database backups + documented disaster-recovery procedure *(3E — Neon PITR + weekly encrypted dump; `docs/runbooks/disaster-recovery.md`; CI restore-drill)*
+- [x] Secrets management (no secrets in repo; documented env/secret strategy) *(3E — `render.yaml` sync:false; gitleaks hook; `docs/runbooks/secrets-and-config.md`)*
 - [ ] Security pass over existing Helmet / rate-limit / RBAC / CORS layer
 - [ ] Deployment target chosen + documented runbook
 
