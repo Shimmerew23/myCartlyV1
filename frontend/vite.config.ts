@@ -10,6 +10,9 @@ export default defineConfig({
   },
   test: {
     globals: false, // test files import { describe, it, expect, vi } from 'vitest' explicitly
+    // Only co-located unit/component tests; never the Playwright e2e/*.spec.ts
+    // (Vitest's default glob also matches .spec.ts, which would import @playwright/test and throw).
+    include: ['src/**/*.test.{ts,tsx}'],
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     css: false,
