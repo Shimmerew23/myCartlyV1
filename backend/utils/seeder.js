@@ -38,10 +38,9 @@ const wipe = async () => {
   await prisma.user.deleteMany({});
 };
 
-const seedDB = async () => {
-  try {
-    await prisma.$connect();
-    logger.info('Connected to PostgreSQL (Prisma) for seeding');
+const seedDatabase = async () => {
+  await prisma.$connect();
+  logger.info('Connected to PostgreSQL (Prisma) for seeding');
 
     await wipe();
     logger.info('Cleared existing data');
@@ -203,14 +202,18 @@ const seedDB = async () => {
     logger.info('   Seller 1:   seller@CartLy.com     / Seller@123456');
     logger.info('   Seller 2:   seller2@CartLy.com    / Seller@123456');
     logger.info('   User:       user@CartLy.com       / User@123456\n');
-
-    await prisma.$disconnect();
-    process.exit(0);
-  } catch (err) {
-    logger.error(`Seed failed: ${err.message}`);
-    await prisma.$disconnect().catch(() => {});
-    process.exit(1);
-  }
 };
 
-seedDB();
+// CLI entrypoint: `node utils/seeder.js` (and `npm run seed`) still wipe+seed then exit.
+if (require.main === module) {
+  seedDatabase()
+    .then(() => prisma.$disconnect())
+    .then(() => process.exit(0))
+    .catch(async (err) => {
+      logger.error(`Seed failed: ${err.message}`);
+      await prisma.$disconnect().catch(() => {});
+      process.exit(1);
+    });
+}
+
+module.exports = { seedDatabase };
