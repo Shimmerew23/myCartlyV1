@@ -10,13 +10,7 @@ test('buyer completes a Cash-on-Delivery checkout', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /Premium Leather Minimalist Wallet/i, level: 1 })).toBeVisible({ timeout: 10_000 });
   await page.waitForLoadState('networkidle');
 
-  // Check what product ID is in Redux before clicking.
-  const productIdInRedux = await page.evaluate(() => {
-    const state = (window as any).__REDUX_STORE__?.getState?.();
-    return state?.products?.currentProduct?._id;
-  });
-
-  // Click Add to Cart and wait for the API response before proceeding.
+  // Click Add to Cart and wait for the API response before proceeding (determinism).
   const addToCartBtn = page.locator('button.btn-primary', { hasText: /add to cart/i }).first();
   await expect(addToCartBtn).toBeEnabled();
   const cartResponsePromise = page.waitForResponse(
@@ -25,11 +19,7 @@ test('buyer completes a Cash-on-Delivery checkout', async ({ page }) => {
   );
   await addToCartBtn.click();
   const cartResponse = await cartResponsePromise;
-  const cartResponseBody = await cartResponse.json();
-  const cartRequestBody = JSON.parse(cartResponse.request().postData() || '{}');
-  expect(cartResponse.ok(), `addToCart failed: ${cartResponse.status()} ${JSON.stringify(cartResponseBody)}, productIdInRedux=${productIdInRedux}, sentProductId=${cartRequestBody.productId}`).toBeTruthy();
-
-  // The sidebar opens and shows the product after the API call completes.
+  expect(cartResponse.ok(), `addToCart failed: ${cartResponse.status()} ${JSON.stringify(await cartResponse.json())}`).toBeTruthy();
 
   // Cart: navigate, select the item, proceed to checkout.
   await page.goto('/cart');
