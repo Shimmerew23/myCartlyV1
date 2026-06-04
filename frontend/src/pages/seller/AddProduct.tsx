@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useDropzone } from 'react-dropzone';
-import { Upload, X, Plus, Save, ArrowLeft, Image } from 'lucide-react';
+import { Upload, X, Save, ArrowLeft } from 'lucide-react';
 import api from '@/api/axios';
 import { Category } from '@/types';
 import toast from 'react-hot-toast';
@@ -45,7 +45,7 @@ const AddProductPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'basic' | 'inventory' | 'shipping' | 'seo'>('basic');
 
-  const { register, handleSubmit, reset, formState: { errors }, watch } = useForm<FormData>({
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: { status: 'draft', stock: 0, isFreeShipping: false, isFeatured: false, isTrending: false, isNewArrival: false },
   });

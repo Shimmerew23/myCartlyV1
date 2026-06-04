@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import {
-  Search, Filter, Shield, UserCheck, UserX, Trash2,
-  RefreshCw, ChevronDown, MoreVertical, Eye, CheckCircle
+  Search, Shield, UserCheck, UserX,
+  RefreshCw, ChevronDown, MoreVertical, CheckCircle
 } from 'lucide-react';
 import api from '@/api/axios';
 import { User } from '@/types';
@@ -21,7 +20,6 @@ const AdminUsers = () => {
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ search: '', role: '', isActive: '', isBanned: '', sort: '-createdAt' });
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async (page = 1) => {
@@ -94,7 +92,7 @@ const AdminUsers = () => {
               { key: 'isActive', label: 'Status', options: [['', 'All'], ['true', 'Active'], ['false', 'Inactive']] },
               { key: 'isBanned', label: 'Banned', options: [['', 'All'], ['false', 'Not Banned'], ['true', 'Banned']] },
               { key: 'sort', label: 'Sort', options: [['-createdAt', 'Newest'], ['createdAt', 'Oldest'], ['name', 'A-Z'], ['-name', 'Z-A']] },
-            ].map(({ key, label, options }) => (
+            ].map(({ key, options }) => (
               <div key={key} className="relative">
                 <select
                   value={(filters as any)[key]}

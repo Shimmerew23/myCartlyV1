@@ -25,7 +25,7 @@ stable feature set, and new features build on the production-ready foundation.
 |---|---|---|---|---|
 | 1 | Database re-platform: MongoDB → PostgreSQL + Prisma | ✅ | Phases 2–4 | [postgres-migration](superpowers/specs/2026-06-01-postgres-migration-design.md) |
 | 2 | Payment re-platform: remove Stripe, add PayPal + GCash | ✅ | Phase 3 | _tbd at phase start_ |
-| 3 | Operational hardening (tests, CI/CD, monitoring, backups) | ⬜ | Phase 4 | _tbd at phase start_ |
+| 3 | Operational hardening (tests, CI/CD, monitoring, backups) | 🟨 | Phase 4 | [phase3-operational-hardening](superpowers/specs/2026-06-04-phase3-operational-hardening-design.md) |
 | 4 | New features (real-time, search/recs, multi-currency/i18n) | ⬜ | — | _tbd at phase start_ |
 
 ---
@@ -97,14 +97,24 @@ Methods offered after Phase 2: PayPal, GCash, COD (Stripe + bank transfer droppe
 
 ---
 
-## Phase 3 — Operational hardening 🟩 (real-money bar)
+## Phase 3 — Operational hardening 🟨 in progress (real-money bar)
 
-**Status:** ⬜ Not started · **Depends on:** Phase 2
+**Status:** 🟨 In progress (3A–3C complete) · **Depends on:** Phase 2 · **Spec:** [phase3-operational-hardening](superpowers/specs/2026-06-04-phase3-operational-hardening-design.md)
+
+Launch context: **real paying users** (full hardening bar). Infra: **paid managed** (recommended Neon Postgres + Upstash Redis). Decomposed safety-net-first into sub-plans 3A–3F.
+
+### Sub-plan progress
+- [x] **3A — CI pipeline + green gates:** GitHub Actions (`.github/workflows/ci.yml`) — backend job (Postgres 16 service → `prisma migrate deploy` via `tests/setup.js` → Jest, 189 tests) + frontend job (ESLint → `vite build`). Added the missing `frontend/.eslintrc.cjs` (ESLint 8 legacy) and cleaned 29 unused symbols; fixed the two pre-existing TS errors (`SellerProfile` fields, `EditProduct` prop). Triggers on `develop` push / PRs into `main`. *(Live Actions run confirmed green after fixing a `JWT_SECRET` env-name mismatch; repo made public and `main` branch protection enabled requiring both checks.)*
+- [x] **3B — Frontend unit/component tests:** Vitest + React Testing Library + MSW (`frontend/src/**/*.test.ts(x)`, harness in `src/test/` + `vitest.setup.ts`). 26 tests: axios envelope unwrap + 401 refresh-queue dedupe/logout/auth-exclusion, auth slice + login thunk, cart math + coupon preservation + selection pruning, checkout payment-method selection, admin refund dialog (validation, full/partial payload, dialog close). Wired `npm run test:run` into the frontend CI job. Spec: [phase3b](superpowers/specs/2026-06-04-phase3b-frontend-tests-design.md)
+- [x] **3C — Playwright E2E:** Chromium suite (`frontend/e2e/`) against `vite preview` + a seeded real backend. Buyer COD journey, admin full-refund (on a seeded paid order via `backend/utils/seedE2E.js`), seller dashboard smoke. Runs as a separate CI `e2e` job (`needs:` backend+frontend). Spec: [phase3c](superpowers/specs/2026-06-04-phase3c-playwright-e2e-design.md)
+- [ ] **3D — Observability:** Sentry (backend + frontend) + real `/health/live` + `/health/ready` (Postgres/Redis probes).
+- [ ] **3E — Backups, DR & secrets:** provision managed Postgres/Redis, automated backups + PITR, tested restore runbook, secrets externalized.
+- [ ] **3F — Security pass + deployment runbook:** replace deprecated `csurf`/`xss-clean`, `npm audit`, config review, cold-start deploy runbook.
 
 ### Workstreams
-- [ ] Backend test suite: Jest + Supertest (controllers, routes, auth, RBAC)
-- [ ] Frontend test suite: Vitest + React Testing Library; Playwright E2E for critical flows
-- [ ] CI/CD: GitHub Actions — lint → typecheck → test → build → `prisma migrate`
+- [ ] Backend test suite: Jest + Supertest (controllers, routes, auth, RBAC) *(already exists — 189 tests; gated by CI in 3A)*
+- [x] Frontend test suite: Vitest + React Testing Library; Playwright E2E for critical flows *(3B done; 3C E2E done)*
+- [x] CI/CD: GitHub Actions — lint → typecheck → test → build *(3A — backend Jest on a Postgres service; frontend ESLint + build; gates PRs into `main`)*
 - [ ] Error tracking: Sentry (backend + frontend)
 - [ ] Health-check endpoints (liveness/readiness) for DB + Redis
 - [ ] Database backups + documented disaster-recovery procedure

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Search, ChevronDown, RefreshCw, Eye, Edit2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Search, ChevronDown, RefreshCw, Eye, ToggleLeft, ToggleRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '@/api/axios';
 import { Product } from '@/types';

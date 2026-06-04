@@ -3,15 +3,14 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend
+  ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
 import {
   Users, Package, ShoppingCart, DollarSign,
-  TrendingUp, AlertCircle, ArrowUpRight, ArrowDownRight,
-  Clock, CheckCircle, XCircle, Truck
+  TrendingUp, AlertCircle, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import api from '@/api/axios';
-import { DashboardStats, Order } from '@/types';
+import { DashboardStats } from '@/types';
 import { Helmet } from 'react-helmet-async';
 
 const STATUS_COLORS: Record<string, string> = {

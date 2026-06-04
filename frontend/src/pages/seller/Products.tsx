@@ -1,6 +1,6 @@
 // Seller Products page
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Plus, Edit2, Trash2, Eye, Search, Package } from 'lucide-react';
 import api from '@/api/axios';
 import { Product } from '@/types';
@@ -8,7 +8,6 @@ import toast from 'react-hot-toast';
 import { Helmet } from 'react-helmet-async';
 
 const SellerProducts = () => {
-  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const [loading, setLoading] = useState(true);

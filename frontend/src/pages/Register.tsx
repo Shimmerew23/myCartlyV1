@@ -281,6 +281,3 @@ export const VerifyEmailPage = () => {
   );
 };
 
-// Need this for named imports in App.tsx
-import { useState as useStateAlias } from 'react';
-const useNavigate2 = useNavigate;

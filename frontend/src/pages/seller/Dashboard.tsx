@@ -10,13 +10,11 @@ import { Helmet } from 'react-helmet-async';
 const SellerDashboard = () => {
   const { user } = useAppSelector((s) => s.auth);
   const [stats, setStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get('/products/seller-stats')
       .then(({ data }) => setStats(data.data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch(() => {});
   }, []);
 
   const statCards = [
