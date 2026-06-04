@@ -74,6 +74,8 @@ router.post('/', authenticate, requireSeller, uploadLimiter,
 
 **Order placement** is wrapped in a `prisma.$transaction` (validate stock → create order + items + initial status event → decrement stock → clear cart), so checkout is atomic. Status changes, returns, and the payment webhook are transactional too.
 
+**Observability** (Phase 3D) — Sentry error tracking is env-gated (`SENTRY_DSN` backend / `VITE_SENTRY_DSN` frontend); with no DSN it is a complete no-op (like Cloudinary/Redis). The backend inits Sentry as the first line of `server.js` (`config/sentry.js`) and captures only `>= 500` errors from the central `errorHandler`; the frontend inits lean (errors only, no replay/tracing) in `main.tsx` and wraps the app in `<Sentry.ErrorBoundary>` (`components/AppErrorFallback.tsx`). Health probes: `GET /health/live` (always 200 — process liveness) and `GET /health/ready` (`controllers/healthController.js`, mounted via `healthRouter`) return plain JSON **outside** the `ApiResponse` envelope; readiness is 503 only when Postgres (system of record) is unreachable — Redis down is reported `degraded` but still 200, honoring graceful degradation. The legacy `GET /health` remains for the Render keep-alive ping.
+
 ### Frontend — SPA, three concerns kept separate
 
 - **Client state** = Redux Toolkit, four slices only: `auth`, `cart`, `products`, `ui` (`store/index.ts`). Use `useAppDispatch` / `useAppSelector` (typed hooks), not the raw react-redux hooks.

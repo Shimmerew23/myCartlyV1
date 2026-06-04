@@ -16,6 +16,7 @@ const ApiError = require('../utils/ApiError');
 const { verifyAccessToken } = require('../utils/jwt');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
+const Sentry = require('@sentry/node');
 
 // ============================================================
 // 1. AUTHENTICATION & AUTHORIZATION MIDDLEWARE
@@ -398,6 +399,7 @@ const errorHandler = (err, req, res, next) => {
   // Log error
   if (error.statusCode >= 500) {
     logger.error(`${error.statusCode} - ${error.message} - ${req.originalUrl} - ${req.method} - ${req.ip}`, { stack: err.stack });
+    Sentry.captureException(err); // no-op if Sentry.init() was never called
   } else {
     logger.warn(`${error.statusCode} - ${error.message} - ${req.originalUrl}`);
   }

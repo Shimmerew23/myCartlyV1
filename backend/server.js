@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('./config/sentry').initSentry();
 require('express-async-errors');
 
 const express = require('express');
@@ -30,6 +31,7 @@ const {
 const {
   authRouter, productRouter, reviewRouter, orderRouter,
   userRouter, cartRouter, categoryRouter, carrierRouter, adminRouter, feedbackRouter, warehouseRouter,
+  healthRouter,
 } = require('./routes/index');
 
 // ============================================================
@@ -164,6 +166,7 @@ app.use('/api/carriers', carrierRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/feedback', feedbackRouter);
 app.use('/api/warehouse', warehouseRouter);
+app.use('/health', healthRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

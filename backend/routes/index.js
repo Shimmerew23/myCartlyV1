@@ -12,6 +12,7 @@ const productCtrl = require('../controllers/productController');
 const orderCtrl = require('../controllers/orderController');
 const carrierCtrl = require('../controllers/carrierController');
 const warehouseCtrl = require('../controllers/warehouseController');
+const healthCtrl = require('../controllers/healthController');
 const {
   updateProfile, addAddress, updateAddress, deleteAddress,
   upgradeToSeller, updateSellerProfile, getSellerStore, getWishlist,
@@ -244,6 +245,13 @@ warehouseRouter.get('/scan', warehouseCtrl.scanOrder);
 // Check in a parcel (update location / advance status)
 warehouseRouter.put('/orders/:id/check-in', warehouseCtrl.checkInParcel);
 
+// ============================================================
+// HEALTH ROUTES (liveness / readiness — plain JSON, no envelope)
+// ============================================================
+const healthRouter = express.Router();
+healthRouter.get('/live', healthCtrl.live);
+healthRouter.get('/ready', healthCtrl.ready);
+
 module.exports = {
   authRouter,
   productRouter,
@@ -256,4 +264,5 @@ module.exports = {
   adminRouter,
   feedbackRouter,
   warehouseRouter,
+  healthRouter,
 };
