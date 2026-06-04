@@ -8,7 +8,6 @@ const fs = require('fs');
 const { uploadBuffer } = require('../config/cloudinary');
 const morgan = require('morgan');
 const Joi = require('joi');
-const { body, query, param, validationResult } = require('express-validator');
 
 const { prisma } = require('../config/prisma');
 const userService = require('../services/userService');
@@ -285,16 +284,6 @@ const validate = (schema, source = 'body') => {
 
     next();
   };
-};
-
-// express-validator middleware
-const handleValidationErrors = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    const formatted = errors.array().map((e) => ({ field: e.path, message: e.msg }));
-    return next(new ApiError(422, 'Validation failed', formatted));
-  }
-  next();
 };
 
 // ============================================================
@@ -603,7 +592,6 @@ module.exports = {
   upload,
   processImages,
   validate,
-  handleValidationErrors,
   cacheMiddleware,
   auditLog,
   httpLogger,
