@@ -460,13 +460,21 @@ Docker services:
 
 ## Default Test Accounts (after seeding)
 
-| Role | Email | Password |
-|---|---|---|
-| Superadmin | superadmin@CartLy.com | Admin@123456 |
-| Admin | admin@CartLy.com | Admin@123456 |
-| Seller | seller@CartLy.com | Seller@123456 |
-| Seller 2 | seller2@CartLy.com | Seller@123456 |
-| User | user@CartLy.com | User@123456 |
+`utils/seeder.js` creates these accounts for **local/test use only**. Each
+password follows the pattern `<Role>@123456` (e.g. the admin's role is `Admin`).
+See `utils/seeder.js` for the exact values.
+
+| Role | Email |
+|---|---|
+| Superadmin | superadmin@CartLy.com |
+| Admin | admin@CartLy.com |
+| Seller | seller@CartLy.com |
+| Seller 2 | seller2@CartLy.com |
+| User | user@CartLy.com |
+
+> ⚠️ **Never seed production.** This repo is public and these are well-known
+> credentials — running `npm run seed` against a live database would create
+> publicly-known logins. Seed only local/test databases.
 
 ---
 

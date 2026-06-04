@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts and git hooks must use LF (they run in Linux CI / git hooks)
+*.sh text eol=lf
+scripts/hooks/pre-commit text eol=lf

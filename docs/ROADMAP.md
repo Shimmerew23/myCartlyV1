@@ -6,7 +6,7 @@ cycle. This file is the living index; update statuses as work lands.
 
 - **Status legend:** ⬜ Not started · 🟨 In progress · ✅ Done
 - **Goal:** real paying users / live launch (strictest reliability + security bar)
-- **Last updated:** 2026-06-04
+- **Last updated:** 2026-06-05
 
 Related docs:
 - Requirements baseline: [../REQUIREMENTS.md](../REQUIREMENTS.md)
@@ -57,7 +57,7 @@ no live-data ETL.
 - [x] Order/payment consistency → Prisma transactions (ACID) *(order placement, status changes, returns, webhook updates)*
 - [x] Rewrite seeder against Prisma
 - [x] Wire `prisma migrate` into startup + CI *(tests run `migrate deploy`; CI gating lands in Phase 3)*
-- [ ] Focused integration test per route group asserting unchanged envelope/shape
+- [x] Focused integration test per route group asserting unchanged envelope/shape *(`backend/tests/envelope.test.js` + `tests/helpers/envelope.js` — one representative endpoint per router asserts the `ApiResponse` envelope, paginated variant, error envelope, and `_id`/nested aliases)*
 
 ### Definition of done
 - All existing API routes return the same envelope and JSON shapes as before.
@@ -97,9 +97,9 @@ Methods offered after Phase 2: PayPal, GCash, COD (Stripe + bank transfer droppe
 
 ---
 
-## Phase 3 — Operational hardening 🟨 in progress (real-money bar)
+## Phase 3 — Operational hardening ✅ complete (real-money bar)
 
-**Status:** 🟨 In progress (3A–3D complete) · **Depends on:** Phase 2 · **Spec:** [phase3-operational-hardening](superpowers/specs/2026-06-04-phase3-operational-hardening-design.md)
+**Status:** ✅ Complete (3A–3F) · **Depends on:** Phase 2 · **Spec:** [phase3-operational-hardening](superpowers/specs/2026-06-04-phase3-operational-hardening-design.md)
 
 Launch context: **real paying users** (full hardening bar). Infra: **paid managed** (recommended Neon Postgres + Upstash Redis). Decomposed safety-net-first into sub-plans 3A–3F.
 
@@ -108,19 +108,19 @@ Launch context: **real paying users** (full hardening bar). Infra: **paid manage
 - [x] **3B — Frontend unit/component tests:** Vitest + React Testing Library + MSW (`frontend/src/**/*.test.ts(x)`, harness in `src/test/` + `vitest.setup.ts`). 26 tests: axios envelope unwrap + 401 refresh-queue dedupe/logout/auth-exclusion, auth slice + login thunk, cart math + coupon preservation + selection pruning, checkout payment-method selection, admin refund dialog (validation, full/partial payload, dialog close). Wired `npm run test:run` into the frontend CI job. Spec: [phase3b](superpowers/specs/2026-06-04-phase3b-frontend-tests-design.md)
 - [x] **3C — Playwright E2E:** Chromium suite (`frontend/e2e/`) against `vite preview` + a seeded real backend. Buyer COD journey, admin full-refund (on a seeded paid order via `backend/utils/seedE2E.js`), seller dashboard smoke. Runs as a separate CI `e2e` job (`needs:` backend+frontend). Spec: [phase3c](superpowers/specs/2026-06-04-phase3c-playwright-e2e-design.md)
 - [x] **3D — Observability:** Env-gated Sentry (`@sentry/node` + `@sentry/react`, no-op without a DSN; backend captures 5xx in `errorHandler`, frontend lean errors-only + `<Sentry.ErrorBoundary>`) and real probes `GET /health/live` / `GET /health/ready` (Postgres required → 503 when down; Redis optional → `degraded`). Spec: [phase3d](superpowers/specs/2026-06-04-phase3d-observability-design.md)
-- [ ] **3E — Backups, DR & secrets:** provision managed Postgres/Redis, automated backups + PITR, tested restore runbook, secrets externalized.
-- [ ] **3F — Security pass + deployment runbook:** replace deprecated `csurf`/`xss-clean`, `npm audit`, config review, cold-start deploy runbook.
+- [x] **3E — Backups, DR & secrets:** Neon PITR as primary DR; repo `pg_dump`/`pg_restore`/verify scripts (`backend/scripts/`) exercised by a CI `restore-drill` job (seed → backup → restore → verify counts); a weekly **encrypted** off-Neon dump workflow (`.github/workflows/db-backup.yml`, gpg AES256, 30-day artifact — required because the repo is public); `render.yaml` secrets declared `sync: false`; gitleaks pre-commit hook; and two runbooks (`docs/runbooks/disaster-recovery.md`, `secrets-and-config.md`). Spec: [phase3e](superpowers/specs/2026-06-04-phase3e-backups-dr-secrets-design.md)
+- [x] **3F — Security pass + deployment runbook:** removed 8 dead/deprecated deps (`csurf`, `csrf`, `xss-clean`, `celebrate`, `express-validator`, `apicache`, `etag`, npm `crypto` shim) + dead `handleValidationErrors`; documented CSRF posture (bearer-token API → no CSRF middleware; dropped vestigial `X-CSRF-Token` from CORS) and layered XSS defense (React encoding + Joi + Helmet CSP); added a production fail-fast secret guard (`utils/validateEnv.js`) and removed the weak `SESSION_SECRET` default; `npm audit` remediated non-breaking — backend `nodemailer` 6→8 (SMTP command-injection fix), 9→1 advisory (residual `uuid`), frontend removed unused `swiper` (critical prototype-pollution) → 17→10 (rest dev/build-chain); stripped plaintext default passwords from README; cold-start/rollback runbook `docs/runbooks/deployment.md`. Spec: [phase3f](superpowers/specs/2026-06-05-phase3f-security-pass-design.md)
 
 ### Workstreams
-- [ ] Backend test suite: Jest + Supertest (controllers, routes, auth, RBAC) *(already exists — 189 tests; gated by CI in 3A)*
+- [x] Backend test suite: Jest + Supertest (controllers, routes, auth, RBAC) *(28 suites / 209 tests covering every route group + RBAC; gated by CI in 3A)*
 - [x] Frontend test suite: Vitest + React Testing Library; Playwright E2E for critical flows *(3B done; 3C E2E done)*
 - [x] CI/CD: GitHub Actions — lint → typecheck → test → build *(3A — backend Jest on a Postgres service; frontend ESLint + build; gates PRs into `main`)*
 - [x] Error tracking: Sentry (backend + frontend) *(3D — env-gated/graceful)*
 - [x] Health-check endpoints (liveness/readiness) for DB + Redis *(3D — `/health/live` + `/health/ready`)*
-- [ ] Database backups + documented disaster-recovery procedure
-- [ ] Secrets management (no secrets in repo; documented env/secret strategy)
-- [ ] Security pass over existing Helmet / rate-limit / RBAC / CORS layer
-- [ ] Deployment target chosen + documented runbook
+- [x] Database backups + documented disaster-recovery procedure *(3E — Neon PITR + weekly encrypted dump; `docs/runbooks/disaster-recovery.md`; CI restore-drill)*
+- [x] Secrets management (no secrets in repo; documented env/secret strategy) *(3E — `render.yaml` sync:false; gitleaks hook; `docs/runbooks/secrets-and-config.md`)*
+- [x] Security pass over existing Helmet / rate-limit / RBAC / CORS layer *(3F — dead-dep prune, CSRF/XSS posture documented, prod secret guard, npm audit remediated)*
+- [x] Deployment target chosen + documented runbook *(3F — Render/Vercel/Neon/Upstash; `docs/runbooks/deployment.md`)*
 
 ### Definition of done
 - CI is green and gates merges to `main`.

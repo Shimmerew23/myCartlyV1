@@ -36,7 +36,6 @@
     "react-redux": "^9.0.4",
     "react-router-dom": "^6.21.1",
     "recharts": "^2.10.3",
-    "swiper": "^11.0.5",
     "tailwind-merge": "^2.2.0",
     "zod": "^3.22.4"
   },

@@ -13,6 +13,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { connectPrisma } = require('./config/prisma');
+const { assertProductionSecrets } = require('./utils/validateEnv');
 const { connectRedis } = require('./config/redis');
 const { connectCloudinary } = require('./config/cloudinary');
 const { startAuditCleanup } = require('./jobs/auditCleanup');
@@ -92,7 +93,7 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CSRF-Token'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     exposedHeaders: ['X-Response-Time', 'X-Cache', 'X-Request-ID'],
   })
 );
@@ -124,7 +125,7 @@ app.use(hpp({ whitelist: ['price', 'rating', 'tags'] }));
 // ============================================================
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'fallback-secret-change-this',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -199,6 +200,9 @@ app.use(errorHandler);
 // ============================================================
 const startServer = async () => {
   try {
+    // Fail fast if production is missing critical signing secrets
+    assertProductionSecrets();
+
     // Connect to PostgreSQL via Prisma (system of record)
     await connectPrisma();
 

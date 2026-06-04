@@ -121,3 +121,56 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 7
+
+  restore-drill:
+    name: DB Restore Drill
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cartly
+          POSTGRES_PASSWORD: cartlypass
+          POSTGRES_DB: cartly_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cartly"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://cartly:cartlypass@localhost:5432/cartly_test?schema=public
+      SOURCE_DB_URL: postgresql://cartly:cartlypass@localhost:5432/cartly_test?schema=public
+      TARGET_DB_URL: postgresql://cartly:cartlypass@localhost:5432/cartly_restore?schema=public
+      ADMIN_DB_URL: postgresql://cartly:cartlypass@localhost:5432/cartly_test
+      JWT_SECRET: ci-drill-secret
+      JWT_REFRESH_SECRET: ci-drill-refresh
+      SESSION_SECRET: ci-drill-session
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install PostgreSQL 16 client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Migrate + seed source DB
+        run: npx prisma migrate deploy && npm run seed
+      - name: Backup source DB
+        run: |
+          DUMP=$(bash scripts/db-backup.sh --url "$SOURCE_DB_URL" --out ./backups)
+          echo "DUMP_FILE=$DUMP" >> "$GITHUB_ENV"
+      - name: Create empty target DB
+        run: psql "$ADMIN_DB_URL" -c "CREATE DATABASE cartly_restore;"
+      - name: Restore into target DB
+        run: bash scripts/db-restore.sh --file "$DUMP_FILE" --url "$TARGET_DB_URL" --yes
+      - name: Verify restore
+        run: bash scripts/verify-restore.sh --source "$SOURCE_DB_URL" --target "$TARGET_DB_URL"
